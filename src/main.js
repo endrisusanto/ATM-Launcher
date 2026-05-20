@@ -10,6 +10,7 @@ const state = {
   concurrency: 1,
   running: false,
   loadedDevices: false,
+  atmRoot: localStorage.getItem("atmRoot") || "",
   logLines: [],
   results: new Map(),
   summary: {
@@ -44,7 +45,7 @@ app.innerHTML = `
           <p>Sequence runner for ATM test tools</p>
         </div>
       </div>
-      <button class="icon-button" id="preflightBtn" title="Preflight">⚙</button>
+      <button class="icon-button" id="preflightBtn" title="Settings">⚙</button>
     </header>
 
     <aside class="devices-pane">
@@ -90,6 +91,28 @@ app.innerHTML = `
       </section>
       <footer class="status-line" id="statusLine">Standby</footer>
     </aside>
+
+    <div class="modal-backdrop hidden" id="settingsModal">
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <header>
+          <div>
+            <h2 id="settingsTitle">SETTINGS</h2>
+            <p>ATM root path dan preflight check</p>
+          </div>
+          <button class="icon-button" id="settingsCloseBtn" title="Close">×</button>
+        </header>
+        <label class="path-field">
+          <span>ATM Path</span>
+          <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" />
+        </label>
+        <div class="settings-actions">
+          <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
+          <button class="ghost-button" id="settingsCheckBtn">Check</button>
+          <button class="run-button" id="settingsSaveBtn">Save</button>
+        </div>
+        <pre class="settings-output" id="settingsOutput"></pre>
+      </section>
+    </div>
   </div>
 `;
 
@@ -102,6 +125,13 @@ const els = {
   refreshBtn: document.querySelector("#refreshBtn"),
   unselectBtn: document.querySelector("#unselectBtn"),
   preflightBtn: document.querySelector("#preflightBtn"),
+  settingsModal: document.querySelector("#settingsModal"),
+  settingsCloseBtn: document.querySelector("#settingsCloseBtn"),
+  autoDetectBtn: document.querySelector("#autoDetectBtn"),
+  settingsCheckBtn: document.querySelector("#settingsCheckBtn"),
+  settingsSaveBtn: document.querySelector("#settingsSaveBtn"),
+  atmRootInput: document.querySelector("#atmRootInput"),
+  settingsOutput: document.querySelector("#settingsOutput"),
   clearLogBtn: document.querySelector("#clearLogBtn"),
   allTools: document.querySelector("#allTools"),
   onlyFailed: document.querySelector("#onlyFailed"),
@@ -145,7 +175,14 @@ els.onlyFailed.addEventListener("change", () => {
 els.concurrencyInput.addEventListener("input", () => {
   state.concurrency = Math.max(1, Number(els.concurrencyInput.value || 1));
 });
-els.preflightBtn.addEventListener("click", runPreflight);
+els.preflightBtn.addEventListener("click", openSettings);
+els.settingsCloseBtn.addEventListener("click", closeSettings);
+els.settingsModal.addEventListener("click", (event) => {
+  if (event.target === els.settingsModal) closeSettings();
+});
+els.autoDetectBtn.addEventListener("click", autoDetectAtmRoot);
+els.settingsCheckBtn.addEventListener("click", runPreflight);
+els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
 
@@ -338,12 +375,48 @@ async function refreshDevices() {
 }
 
 async function runPreflight() {
+  saveSettings(false);
   appendLog("[launcher] Running preflight...");
+  els.settingsOutput.textContent = "Checking...";
   try {
-    const lines = await invoke("preflight");
+    const lines = await invoke("preflight", { atmRoot: state.atmRoot || null });
     lines.forEach(appendLog);
+    els.settingsOutput.textContent = lines.join("\n");
   } catch (error) {
     appendLog(`[launcher] Preflight failed: ${error}`);
+    els.settingsOutput.textContent = `Preflight failed: ${error}`;
+  }
+}
+
+function openSettings() {
+  els.atmRootInput.value = state.atmRoot;
+  els.settingsOutput.textContent = state.atmRoot ? `Current ATM path:\n${state.atmRoot}` : "ATM path is empty. Use Auto Detect or paste the ATM root path.";
+  els.settingsModal.classList.remove("hidden");
+  els.atmRootInput.focus();
+}
+
+function closeSettings() {
+  els.settingsModal.classList.add("hidden");
+}
+
+function saveSettings(writeLog = true) {
+  state.atmRoot = els.atmRootInput.value.trim();
+  if (state.atmRoot) localStorage.setItem("atmRoot", state.atmRoot);
+  else localStorage.removeItem("atmRoot");
+  if (writeLog) appendLog(`[launcher] ATM path saved: ${state.atmRoot || "(auto)"}`);
+}
+
+async function autoDetectAtmRoot() {
+  els.settingsOutput.textContent = "Detecting ATM root...";
+  try {
+    const path = await invoke("default_atm_root");
+    els.atmRootInput.value = path;
+    saveSettings(false);
+    els.settingsOutput.textContent = `Detected ATM path:\n${path}`;
+    appendLog(`[launcher] ATM path detected: ${path}`);
+  } catch (error) {
+    els.settingsOutput.textContent = `Auto detect failed: ${error}`;
+    appendLog(`[launcher] Auto detect failed: ${error}`);
   }
 }
 
@@ -371,6 +444,7 @@ async function runBatch() {
         tools,
         concurrency: state.concurrency,
         update: false,
+        atm_root: state.atmRoot || null,
       },
     });
   } catch (error) {
@@ -397,7 +471,7 @@ async function openDeviceResults(serial) {
   if (!serial) return;
   appendLog(`[launcher] Opening results for ${serial}...`);
   try {
-    const path = await invoke("open_device_results", { serial });
+    const path = await invoke("open_device_results", { serial, atmRoot: state.atmRoot || null });
     appendLog(`[launcher] Opened: ${path}`);
   } catch (error) {
     appendLog(`[launcher] Open results failed: ${error}`);

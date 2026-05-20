@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
+#[cfg(unix)]
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -32,6 +33,7 @@ struct RunRequest {
     tools: Vec<String>,
     concurrency: Option<u8>,
     update: Option<bool>,
+    atm_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,8 +47,13 @@ struct RunState {
 }
 
 #[tauri::command]
-fn preflight() -> Result<Vec<String>, String> {
-    let root = atm_root()?;
+fn default_atm_root() -> Result<String, String> {
+    Ok(atm_root()?.display().to_string())
+}
+
+#[tauri::command]
+fn preflight(atm_root: Option<String>) -> Result<Vec<String>, String> {
+    let root = resolve_atm_root(atm_root)?;
     let mut lines = vec![
         format!("Root: {}", root.display()),
         check_file("ATM_v5.jar", root.join("ATM_v5.jar")),
@@ -116,7 +123,7 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
 
 #[tauri::command]
 fn run_batch(app: AppHandle, run_state: State<'_, RunState>, request: RunRequest) -> Result<(), String> {
-    let root = atm_root()?;
+    let root = resolve_atm_root(request.atm_root.clone())?;
     if request.devices.is_empty() {
         return Err("No devices selected".to_string());
     }
@@ -236,8 +243,8 @@ fn cancel_batch(app: AppHandle, run_state: State<'_, RunState>) -> Result<(), St
 }
 
 #[tauri::command]
-fn open_device_results(serial: String) -> Result<String, String> {
-    let root = atm_root()?;
+fn open_device_results(serial: String, atm_root: Option<String>) -> Result<String, String> {
+    let root = resolve_atm_root(atm_root)?;
     let results = root.join("results");
     if !results.exists() {
         return Err(format!("Results folder not found: {}", results.display()));
@@ -250,7 +257,14 @@ fn open_device_results(serial: String) -> Result<String, String> {
 fn main() {
     tauri::Builder::default()
         .manage(RunState::default())
-        .invoke_handler(tauri::generate_handler![preflight, list_devices, run_batch, cancel_batch, open_device_results])
+        .invoke_handler(tauri::generate_handler![
+            default_atm_root,
+            preflight,
+            list_devices,
+            run_batch,
+            cancel_batch,
+            open_device_results
+        ])
         .run(tauri::generate_context!())
         .expect("error while running ATM Batch Launcher");
 }
@@ -333,6 +347,21 @@ fn open_path(path: &Path) -> Result<(), String> {
         .spawn()
         .map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
     Ok(())
+}
+
+fn resolve_atm_root(value: Option<String>) -> Result<PathBuf, String> {
+    let Some(value) = value else {
+        return atm_root();
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return atm_root();
+    }
+    let path = PathBuf::from(trimmed);
+    if path.join("ATM_v5.jar").exists() {
+        return Ok(path);
+    }
+    Err(format!("Invalid ATM root: {}. ATM_v5.jar was not found.", path.display()))
 }
 
 fn atm_root() -> Result<PathBuf, String> {
