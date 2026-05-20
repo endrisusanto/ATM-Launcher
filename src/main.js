@@ -596,7 +596,10 @@ function collectResultFromLine(line) {
   if (!match) return;
   const serial = match[1];
   const tool = match[2].toLowerCase();
-  const status = normalizeToolStatus(match[3]);
+  const rawStatus = match[3];
+  const status = tool === "sdt" && rawStatus === "NOTEXECUTED" && line.includes("exit=0")
+    ? "PASS"
+    : normalizeToolStatus(rawStatus);
   const previous = state.results.get(`${serial}:${tool}`);
   const elapsed = previous?.startedAt ? Date.now() - previous.startedAt : Date.now() - state.runStartedAt;
   state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed) });

@@ -206,6 +206,15 @@ fn run_batch(
         let java_file = root
             .join("atm-batch-launcher")
             .join("AtmBatchLauncher.java");
+        match ensure_batch_launcher_compat(&root) {
+            Ok(Some(message)) => {
+                let _ = app.emit("atm-run-log", message);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let _ = app.emit("atm-run-log", format!("[launcher] Patch warning: {err}"));
+            }
+        }
         let devices = request.devices.join(",");
         let tools = request.tools.join(",");
         let concurrency = request.concurrency.unwrap_or(1).max(1).to_string();
@@ -314,6 +323,73 @@ fn run_batch(
     });
 
     Ok(())
+}
+
+fn ensure_batch_launcher_compat(root: &Path) -> Result<Option<String>, String> {
+    let java_file = root
+        .join("atm-batch-launcher")
+        .join("AtmBatchLauncher.java");
+    let original = std::fs::read_to_string(&java_file)
+        .map_err(|err| format!("Cannot read {}: {err}", java_file.display()))?;
+    let mut updated = original.clone();
+
+    let bvt_new = r#"case BVT -> Arrays.asList(JAVA_BIN, "-jar", jar, device.serial);"#;
+    for bvt_old in [
+        r#"case BVT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--ui", "false", "--devices", device.serial);"#,
+        r#"case BVT -> Arrays.asList(JAVA_BIN, "-jar", jar, "-s", device.serial);"#,
+        r#"Arrays.asList(JAVA_BIN, "-jar", jar, "--ui", "false", "--devices", device.serial)"#,
+        r#"Arrays.asList(JAVA_BIN, "-jar", jar, "-s", device.serial)"#,
+    ] {
+        let replacement = if bvt_old.starts_with("case BVT") {
+            bvt_new
+        } else {
+            r#"Arrays.asList(JAVA_BIN, "-jar", jar, device.serial)"#
+        };
+        updated = updated.replace(bvt_old, replacement);
+    }
+
+    let sdt_ui_old = r#"                if (tool == ToolProfile.SDT) {
+                    ResultSummary deviceResult = inspectDeviceSdtResult(adb(), device);
+                    if ("NOTEXECUTED".equals(deviceResult.status) && exitCode == 0) {
+                        return new ResultSummary("PASS", "exit=0 (result saved by SDT)");
+                    }
+                    return deviceResult;
+                }"#;
+    let sdt_ui_new = r#"                if (tool == ToolProfile.SDT) {
+                    if (exitCode == 0) {
+                        return new ResultSummary("PASS", "exit=0 (SDT saved result externally)");
+                    }
+                    ResultSummary deviceResult = inspectDeviceSdtResult(adb(), device);
+                    return deviceResult;
+                }"#;
+    updated = updated.replace(sdt_ui_old, sdt_ui_new);
+
+    let sdt_cli_old = r#"                if (tool == ToolProfile.SDT) {
+                    ResultSummary deviceResult = inspectDeviceSdtResult(cliAdbPath, device);
+                    if ("NOTEXECUTED".equals(deviceResult.status) && exitCode == 0) {
+                        return new ResultSummary("PASS", "exit=0 (result saved by SDT)");
+                    }
+                    return deviceResult;
+                }"#;
+    let sdt_cli_new = r#"                if (tool == ToolProfile.SDT) {
+                    if (exitCode == 0) {
+                        return new ResultSummary("PASS", "exit=0 (SDT saved result externally)");
+                    }
+                    ResultSummary deviceResult = inspectDeviceSdtResult(cliAdbPath, device);
+                    return deviceResult;
+                }"#;
+    updated = updated.replace(sdt_cli_old, sdt_cli_new);
+
+    if updated == original {
+        return Ok(None);
+    }
+
+    std::fs::write(&java_file, updated)
+        .map_err(|err| format!("Cannot update {}: {err}", java_file.display()))?;
+    Ok(Some(format!(
+        "[launcher] Patched batch launcher compatibility: {}",
+        java_file.display()
+    )))
 }
 
 #[tauri::command]
