@@ -53,3 +53,5 @@ scripts/release-next.sh patch "Fix BVT crash NumberFormatException and SDT false
 ```
 
 Gunakan `minor` atau `major` sebagai argumen pertama jika ingin menaikkan versi selain patch.
+
+Installer Tauri membawa resource `atm-batch-launcher`. Saat batch dijalankan, app akan menyalin launcher bawaan installer ke `<ATM root>/atm-batch-launcher`, sehingga user cukup memilih folder ATM yang berisi `ATM_v5.jar`.

@@ -1,0 +1,7 @@
+@ECHO off
+SETLOCAL
+SET SCRIPT_DIR=%~dp0
+PUSHD "%SCRIPT_DIR%\.."
+java "%SCRIPT_DIR%AtmBatchLauncher.java"
+POPD
+ENDLOCAL

@@ -206,6 +206,15 @@ fn run_batch(
         let java_file = root
             .join("atm-batch-launcher")
             .join("AtmBatchLauncher.java");
+        match sync_bundled_batch_launcher(&app, &root) {
+            Ok(Some(message)) => {
+                let _ = app.emit("atm-run-log", message);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let _ = app.emit("atm-run-log", format!("[launcher] Resource sync warning: {err}"));
+            }
+        }
         match ensure_batch_launcher_compat(&root) {
             Ok(Some(message)) => {
                 let _ = app.emit("atm-run-log", message);
@@ -323,6 +332,65 @@ fn run_batch(
     });
 
     Ok(())
+}
+
+fn sync_bundled_batch_launcher(app: &AppHandle, root: &Path) -> Result<Option<String>, String> {
+    let source_dir = bundled_batch_launcher_dir(app)
+        .ok_or_else(|| "Bundled atm-batch-launcher resource was not found".to_string())?;
+    let target_dir = root.join("atm-batch-launcher");
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|err| format!("Cannot create {}: {err}", target_dir.display()))?;
+
+    let mut copied = 0;
+    for file_name in [
+        "AtmBatchLauncher.java",
+        "README.md",
+        "run-launcher.bat",
+        "run-launcher.sh",
+    ] {
+        let source = source_dir.join(file_name);
+        if !source.is_file() {
+            continue;
+        }
+        let target = target_dir.join(file_name);
+        std::fs::copy(&source, &target).map_err(|err| {
+            format!(
+                "Cannot copy {} to {}: {err}",
+                source.display(),
+                target.display()
+            )
+        })?;
+        copied += 1;
+
+        #[cfg(unix)]
+        if file_name.ends_with(".sh") {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&target)
+                .map_err(|err| format!("Cannot read permissions for {}: {err}", target.display()))?
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&target, permissions)
+                .map_err(|err| format!("Cannot set permissions for {}: {err}", target.display()))?;
+        }
+    }
+
+    if copied == 0 {
+        return Err(format!("No launcher files found in {}", source_dir.display()));
+    }
+
+    Ok(Some(format!(
+        "[launcher] Synced bundled atm-batch-launcher to {}",
+        target_dir.display()
+    )))
+}
+
+fn bundled_batch_launcher_dir(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("atm-batch-launcher"));
+    }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("atm-batch-launcher"));
+    candidates.into_iter().find(|path| path.join("AtmBatchLauncher.java").is_file())
 }
 
 fn ensure_batch_launcher_compat(root: &Path) -> Result<Option<String>, String> {
