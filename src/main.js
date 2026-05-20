@@ -193,13 +193,21 @@ els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
 els.browseBtn.addEventListener("click", async () => {
-  const selected = await open({
-    directory: true,
-    multiple: false,
-    title: "Select ATM Root Directory"
-  });
-  if (selected) {
-    els.atmRootInput.value = selected;
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Select ATM Root Directory",
+    });
+    const path = normalizeDialogPath(selected);
+    if (path) {
+      els.atmRootInput.value = path;
+      saveSettings(false);
+      els.settingsOutput.textContent = `Selected ATM path:\n${path}`;
+    }
+  } catch (error) {
+    els.settingsOutput.textContent = `Browse failed: ${error}`;
+    appendLog(`[launcher] Browse failed: ${error}`);
   }
 });
 
@@ -494,12 +502,21 @@ async function runBatch() {
 async function cancelBatch() {
   appendLog("[launcher] Cancel requested.");
   els.cancelBtn.disabled = true;
+  els.statusLine.textContent = "Cancelling";
   try {
     await invoke("cancel_batch");
   } catch (error) {
     appendLog(`[launcher] Cancel failed: ${error}`);
     els.cancelBtn.disabled = false;
+    els.statusLine.textContent = state.running ? "Running" : "Standby";
   }
+}
+
+function normalizeDialogPath(selected) {
+  if (!selected) return "";
+  if (typeof selected === "string") return selected;
+  if (Array.isArray(selected)) return normalizeDialogPath(selected[0]);
+  return selected.path || selected.file || selected.toString?.() || "";
 }
 
 async function openDeviceResults(serial) {

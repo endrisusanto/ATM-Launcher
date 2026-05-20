@@ -8,8 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
-#[cfg(unix)]
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
@@ -47,7 +46,13 @@ struct RunFinished {
 
 #[derive(Default)]
 struct RunState {
-    active_pid: Mutex<Option<u32>>,
+    active: Mutex<Option<ActiveBatch>>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveBatch {
+    pid: Option<u32>,
+    cancel_file: PathBuf,
 }
 
 #[tauri::command]
@@ -175,10 +180,26 @@ fn run_batch(
         return Err("No tools selected".to_string());
     }
     {
-        let active_pid = run_state.active_pid.lock().map_err(|err| err.to_string())?;
-        if active_pid.is_some() {
+        let active = run_state.active.lock().map_err(|err| err.to_string())?;
+        if active.is_some() {
             return Err("Batch is already running".to_string());
         }
+    }
+
+    let cancel_file = root
+        .join("atm-batch-launcher")
+        .join("runs")
+        .join(format!(".cancel-{}", unique_millis()));
+    if let Some(parent) = cancel_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::remove_file(&cancel_file);
+    {
+        let mut active = run_state.active.lock().map_err(|err| err.to_string())?;
+        *active = Some(ActiveBatch {
+            pid: None,
+            cancel_file: cancel_file.clone(),
+        });
     }
 
     thread::spawn(move || {
@@ -197,6 +218,8 @@ fn run_batch(
             devices,
             "--concurrency".to_string(),
             concurrency,
+            "--cancel-file".to_string(),
+            cancel_file.to_string_lossy().to_string(),
         ];
         if request.update.unwrap_or(false) {
             args.push("--update".to_string());
@@ -213,7 +236,7 @@ fn run_batch(
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        
+
         #[cfg(windows)]
         command.creation_flags(0x08000000);
         #[cfg(unix)]
@@ -231,6 +254,15 @@ fn run_batch(
                     "atm-run-log",
                     format!("[launcher] Failed to start batch: {err}"),
                 );
+                let state = app.state::<RunState>();
+                if let Ok(mut active) = state.active.lock() {
+                    if active
+                        .as_ref()
+                        .is_some_and(|batch| batch.cancel_file == cancel_file)
+                    {
+                        *active = None;
+                    }
+                }
                 let _ = app.emit("atm-run-finished", RunFinished { exit_code: 1 });
                 return;
             }
@@ -241,8 +273,13 @@ fn run_batch(
             format!("[launcher] Batch process started pid={child_id}"),
         );
         let state = app.state::<RunState>();
-        if let Ok(mut active_pid) = state.active_pid.lock() {
-            *active_pid = Some(child_id);
+        if let Ok(mut active) = state.active.lock() {
+            if let Some(batch) = active
+                .as_mut()
+                .filter(|batch| batch.cancel_file == cancel_file)
+            {
+                batch.pid = Some(child_id);
+            }
         }
 
         if let Some(stdout) = child.stdout.take() {
@@ -264,9 +301,10 @@ fn run_batch(
 
         let exit_code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
         let mut should_emit_finished = true;
-        if let Ok(mut active_pid) = state.active_pid.lock() {
-            match *active_pid {
-                Some(pid) if pid == child_id => *active_pid = None,
+        let _ = std::fs::remove_file(&cancel_file);
+        if let Ok(mut active) = state.active.lock() {
+            match active.as_ref() {
+                Some(batch) if batch.cancel_file == cancel_file => *active = None,
                 _ => should_emit_finished = false,
             }
         }
@@ -280,29 +318,46 @@ fn run_batch(
 
 #[tauri::command]
 fn cancel_batch(app: AppHandle, run_state: State<'_, RunState>) -> Result<(), String> {
-    let pid = {
-        let active_pid = run_state.active_pid.lock().map_err(|err| err.to_string())?;
-        *active_pid
+    let active = {
+        let active = run_state.active.lock().map_err(|err| err.to_string())?;
+        active.clone()
     };
-    let Some(pid) = pid else {
+    let Some(active) = active else {
         let _ = app.emit(
             "atm-run-log",
             "[launcher] No active batch process to cancel.",
         );
         return Ok(());
     };
+    let pid = active.pid;
 
-    let _ = app.emit(
-        "atm-run-log",
-        format!("[launcher] Cancelling batch pid={pid}..."),
-    );
-    terminate_process_tree(pid);
-    if let Ok(mut active_pid) = run_state.active_pid.lock() {
-        if active_pid.is_some_and(|active| active == pid) {
-            *active_pid = None;
+    let message = match pid {
+        Some(pid) => format!("[launcher] Cancelling batch pid={pid}; waiting for cleanup..."),
+        None => "[launcher] Cancelling pending batch; waiting for cleanup...".to_string(),
+    };
+    let _ = app.emit("atm-run-log", message);
+    std::fs::write(&active.cancel_file, b"cancel").map_err(|err| err.to_string())?;
+    let app_watchdog = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(8));
+        let Some(pid) = pid else {
+            return;
+        };
+        let state = app_watchdog.state::<RunState>();
+        let still_active = state
+            .active
+            .lock()
+            .ok()
+            .and_then(|active| active.as_ref().map(|batch| batch.pid == Some(pid)))
+            .unwrap_or(false);
+        if still_active {
+            let _ = app_watchdog.emit(
+                "atm-run-log",
+                format!("[launcher] Cancel cleanup timeout; force-killing pid={pid}..."),
+            );
+            terminate_process_tree(pid);
         }
-    }
-    let _ = app.emit("atm-run-finished", RunFinished { exit_code: 130 });
+    });
     Ok(())
 }
 
@@ -350,6 +405,13 @@ fn terminate_process_tree(pid: u32) {
     let _ = Command::new("kill").args(["-TERM", &group]).status();
     thread::sleep(Duration::from_millis(800));
     let _ = Command::new("kill").args(["-KILL", &group]).status();
+}
+
+fn unique_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
 }
 
 #[cfg(windows)]
