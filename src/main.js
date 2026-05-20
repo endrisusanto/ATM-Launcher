@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 import atmLogo from "./assets/ATM.png";
 
@@ -105,7 +106,10 @@ app.innerHTML = `
         </header>
         <label class="path-field">
           <span>ATM Path</span>
-          <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" />
+          <div style="display: flex; gap: 8px;">
+            <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" style="flex: 1; min-width: 0;" />
+            <button id="browseBtn" class="ghost-button" style="padding: 0 12px; height: 34px;">Browse</button>
+          </div>
         </label>
         <div class="settings-actions">
           <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
@@ -144,6 +148,7 @@ const els = {
   passMetric: document.querySelector("#passMetric"),
   failMetric: document.querySelector("#failMetric"),
   runtimeMetric: document.querySelector("#runtimeMetric"),
+  browseBtn: document.querySelector("#browseBtn"),
 };
 
 els.refreshBtn.addEventListener("click", refreshDevices);
@@ -187,6 +192,16 @@ els.settingsCheckBtn.addEventListener("click", runPreflight);
 els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
+els.browseBtn.addEventListener("click", async () => {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Select ATM Root Directory"
+  });
+  if (selected) {
+    els.atmRootInput.value = selected;
+  }
+});
 
 listen("atm-run-log", (event) => {
   const line = String(event.payload || "");
@@ -309,7 +324,8 @@ function renderTests() {
       const result = state.results.get(key) || { status: "Standby", time: "-" };
       const checked = state.tools.includes(testcase.tool);
       const progress = progressForStatus(result.status);
-      const displayTime = result.status === "Executing" && result.startedAt
+      const isRunning = result.status === "Executing" || result.status === "Running";
+      const displayTime = isRunning && result.startedAt
         ? formatDuration(Date.now() - result.startedAt)
         : result.time;
       return `
@@ -444,7 +460,11 @@ async function runBatch() {
   state.results.clear();
   devices.forEach((serial) => {
     tools.forEach((tool, index) => {
-      state.results.set(`${serial}:${tool}`, { status: index === 0 ? "Running" : "Standby", time: "-" });
+      if (index === 0) {
+        state.results.set(`${serial}:${tool}`, { status: "Running", time: "00:00:00", startedAt: Date.now() });
+      } else {
+        state.results.set(`${serial}:${tool}`, { status: "Standby", time: "-" });
+      }
     });
   });
   els.runBtn.disabled = true;
@@ -580,7 +600,7 @@ function markNextToolRunning(serial, completedTool) {
   const key = `${serial}:${nextTool}`;
   const current = state.results.get(key);
   if (!current || current.status === "Standby") {
-    state.results.set(key, { status: "Running", time: "-" });
+    state.results.set(key, { status: "Running", time: "00:00:00", startedAt: Date.now() });
   }
 }
 

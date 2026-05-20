@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[derive(Debug, Clone, Serialize)]
 struct DeviceInfo {
@@ -62,7 +64,15 @@ fn preflight(atm_root: Option<String>) -> Result<Vec<String>, String> {
         check_dir("tools", root.join("tools")),
         check_dir("results", root.join("results")),
     ];
-    for tool in ["Getprop.jar", "BVT.jar", "SVT.jar", "SDT.jar", "FMDUT.jar", "CSCChecker.jar", "AtmOctopus.jar"] {
+    for tool in [
+        "Getprop.jar",
+        "BVT.jar",
+        "SVT.jar",
+        "SDT.jar",
+        "FMDUT.jar",
+        "CSCChecker.jar",
+        "AtmOctopus.jar",
+    ] {
         lines.push(check_file(tool, root.join("tools").join(tool)));
     }
     Ok(lines)
@@ -75,7 +85,8 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
     let mut devices = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("List of devices") || trimmed.starts_with('*') {
+        if trimmed.is_empty() || trimmed.starts_with("List of devices") || trimmed.starts_with('*')
+        {
             continue;
         }
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -95,25 +106,52 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
             model: first_non_empty(&[
                 token_value(trimmed, "model"),
                 props.get("ro.product.model").cloned().unwrap_or_default(),
-                props.get("ro.product.vendor.model").cloned().unwrap_or_default(),
+                props
+                    .get("ro.product.vendor.model")
+                    .cloned()
+                    .unwrap_or_default(),
             ]),
             android: first_non_empty(&[
-                props.get("ro.build.version.release").cloned().unwrap_or_default(),
-                props.get("ro.system.build.version.release").cloned().unwrap_or_default(),
+                props
+                    .get("ro.build.version.release")
+                    .cloned()
+                    .unwrap_or_default(),
+                props
+                    .get("ro.system.build.version.release")
+                    .cloned()
+                    .unwrap_or_default(),
             ]),
             build: first_non_empty(&[
-                props.get("ro.build.version.incremental").cloned().unwrap_or_default(),
-                props.get("ro.vendor.build.version.incremental").cloned().unwrap_or_default(),
+                props
+                    .get("ro.build.version.incremental")
+                    .cloned()
+                    .unwrap_or_default(),
+                props
+                    .get("ro.vendor.build.version.incremental")
+                    .cloned()
+                    .unwrap_or_default(),
             ]),
             csc: first_non_empty(&[
-                props.get("ril.official_cscver").cloned().unwrap_or_default(),
+                props
+                    .get("ril.official_cscver")
+                    .cloned()
+                    .unwrap_or_default(),
                 props.get("ro.csc.sales_code").cloned().unwrap_or_default(),
             ]),
-            security_patch: props.get("ro.build.version.security_patch").cloned().unwrap_or_default(),
+            security_patch: props
+                .get("ro.build.version.security_patch")
+                .cloned()
+                .unwrap_or_default(),
             carrier: props.get("ro.csc.sales_code").cloned().unwrap_or_default(),
-            region: props.get("ro.product.locale.region").cloned().unwrap_or_else(|| "INDONESIA".to_string()),
+            region: props
+                .get("ro.product.locale.region")
+                .cloned()
+                .unwrap_or_else(|| "INDONESIA".to_string()),
             modem: first_non_empty(&[
-                props.get("gsm.version.baseband").cloned().unwrap_or_default(),
+                props
+                    .get("gsm.version.baseband")
+                    .cloned()
+                    .unwrap_or_default(),
                 props.get("ril.modem.board").cloned().unwrap_or_default(),
             ]),
         });
@@ -122,7 +160,11 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 #[tauri::command]
-fn run_batch(app: AppHandle, run_state: State<'_, RunState>, request: RunRequest) -> Result<(), String> {
+fn run_batch(
+    app: AppHandle,
+    run_state: State<'_, RunState>,
+    request: RunRequest,
+) -> Result<(), String> {
     let root = resolve_atm_root(request.atm_root.clone())?;
     if request.devices.is_empty() {
         return Err("No devices selected".to_string());
@@ -138,7 +180,9 @@ fn run_batch(app: AppHandle, run_state: State<'_, RunState>, request: RunRequest
     }
 
     thread::spawn(move || {
-        let java_file = root.join("atm-batch-launcher").join("AtmBatchLauncher.java");
+        let java_file = root
+            .join("atm-batch-launcher")
+            .join("AtmBatchLauncher.java");
         let devices = request.devices.join(",");
         let tools = request.tools.join(",");
         let concurrency = request.concurrency.unwrap_or(1).max(1).to_string();
@@ -157,13 +201,19 @@ fn run_batch(app: AppHandle, run_state: State<'_, RunState>, request: RunRequest
         }
 
         let java = java_bin();
-        let _ = app.emit("atm-run-log", format!("[launcher] Spawning: {java} {}", args.join(" ")));
+        let _ = app.emit(
+            "atm-run-log",
+            format!("[launcher] Spawning: {java} {}", args.join(" ")),
+        );
         let mut command = Command::new(java);
         command
             .current_dir(&root)
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
         #[cfg(unix)]
         unsafe {
             command.pre_exec(|| {
@@ -175,13 +225,19 @@ fn run_batch(app: AppHandle, run_state: State<'_, RunState>, request: RunRequest
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
-                let _ = app.emit("atm-run-log", format!("[launcher] Failed to start batch: {err}"));
+                let _ = app.emit(
+                    "atm-run-log",
+                    format!("[launcher] Failed to start batch: {err}"),
+                );
                 let _ = app.emit("atm-run-finished", RunFinished { exit_code: 1 });
                 return;
             }
         };
         let child_id = child.id();
-        let _ = app.emit("atm-run-log", format!("[launcher] Batch process started pid={child_id}"));
+        let _ = app.emit(
+            "atm-run-log",
+            format!("[launcher] Batch process started pid={child_id}"),
+        );
         let state = app.state::<RunState>();
         if let Ok(mut active_pid) = state.active_pid.lock() {
             *active_pid = Some(child_id);
@@ -227,11 +283,17 @@ fn cancel_batch(app: AppHandle, run_state: State<'_, RunState>) -> Result<(), St
         *active_pid
     };
     let Some(pid) = pid else {
-        let _ = app.emit("atm-run-log", "[launcher] No active batch process to cancel.");
+        let _ = app.emit(
+            "atm-run-log",
+            "[launcher] No active batch process to cancel.",
+        );
         return Ok(());
     };
 
-    let _ = app.emit("atm-run-log", format!("[launcher] Cancelling batch pid={pid}..."));
+    let _ = app.emit(
+        "atm-run-log",
+        format!("[launcher] Cancelling batch pid={pid}..."),
+    );
     terminate_process_tree(pid);
     if let Ok(mut active_pid) = run_state.active_pid.lock() {
         if active_pid.is_some_and(|active| active == pid) {
@@ -256,6 +318,7 @@ fn open_device_results(serial: String, atm_root: Option<String>) -> Result<Strin
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(RunState::default())
         .invoke_handler(tauri::generate_handler![
             default_atm_root,
@@ -289,9 +352,10 @@ fn terminate_process_tree(pid: u32) {
 
 #[cfg(windows)]
 fn terminate_process_tree(pid: u32) {
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+    command.creation_flags(0x08000000);
+    let _ = command.status();
 }
 
 fn find_device_results_dir(results: &Path, serial: &str) -> Option<PathBuf> {
@@ -361,7 +425,10 @@ fn resolve_atm_root(value: Option<String>) -> Result<PathBuf, String> {
     if path.join("ATM_v5.jar").exists() {
         return Ok(path);
     }
-    Err(format!("Invalid ATM root: {}. ATM_v5.jar was not found.", path.display()))
+    Err(format!(
+        "Invalid ATM root: {}. ATM_v5.jar was not found.",
+        path.display()
+    ))
 }
 
 fn atm_root() -> Result<PathBuf, String> {
@@ -399,7 +466,11 @@ fn adb_path() -> String {
 
 fn java_bin() -> String {
     if let Ok(java_home) = env::var("JAVA_HOME") {
-        let candidate = PathBuf::from(java_home).join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
+        let candidate = PathBuf::from(java_home).join("bin").join(if cfg!(windows) {
+            "java.exe"
+        } else {
+            "java"
+        });
         if candidate.exists() {
             return candidate.to_string_lossy().to_string();
         }
@@ -419,6 +490,8 @@ fn adb_props(adb: &str, serial: &str) -> Result<HashMap<String, String>, String>
 }
 
 fn run_output(command: &mut Command) -> Result<String, String> {
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
     let output = command.output().map_err(|err| err.to_string())?;
     let mut text = String::new();
     text.push_str(&String::from_utf8_lossy(&output.stdout));
@@ -455,9 +528,17 @@ fn first_non_empty(values: &[String]) -> String {
 }
 
 fn check_file(label: &str, path: PathBuf) -> String {
-    format!("{} {label}: {}", if path.is_file() { "OK  " } else { "FAIL" }, path.display())
+    format!(
+        "{} {label}: {}",
+        if path.is_file() { "OK  " } else { "FAIL" },
+        path.display()
+    )
 }
 
 fn check_dir(label: &str, path: PathBuf) -> String {
-    format!("{} {label}: {}", if path.is_dir() { "OK  " } else { "FAIL" }, path.display())
+    format!(
+        "{} {label}: {}",
+        if path.is_dir() { "OK  " } else { "FAIL" },
+        path.display()
+    )
 }
