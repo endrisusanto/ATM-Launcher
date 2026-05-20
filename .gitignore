@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Rust/Tauri build output
+src-tauri/target/
+
+# Generated Tauri schemas
+src-tauri/gen/schemas/
+
+# Local logs and runtime output
+*.log
+logs/
+runs/
+src-tauri/target/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local environment
+.env
+.env.*
+
+# Release artifacts
+*.AppImage
+*.deb
+*.rpm
+*.msi
+*.exe
