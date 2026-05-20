@@ -31,7 +31,7 @@ const testcases = [
   { tool: "sdt", name: "SDTDeviceTest", description: "Run SDT silent test package" },
 ];
 
-const terminalStatuses = ["Pass", "Failed", "Error"];
+const terminalStatuses = ["Pass", "Warning", "Failed", "Error"];
 
 const app = document.querySelector("#app");
 
@@ -336,6 +336,7 @@ function renderTests() {
       const displayTime = isRunning && result.startedAt
         ? formatDuration(Date.now() - result.startedAt)
         : result.time;
+      const subtests = testcase.tool === "bvt" ? renderBvtSubtests(result.subtests) : `<span class="subtest-empty">-</span>`;
       return `
         <tr class="${checked ? "checked" : ""}" data-tool="${testcase.tool}">
           <td><button class="row-check ${checked ? "checked" : ""}" data-tool="${testcase.tool}" title="Select testcase">${checked ? "✓" : ""}</button></td>
@@ -345,6 +346,7 @@ function renderTests() {
             <div class="progress-track ${statusClass(result.status)}"><div class="progress-fill" style="width:${progress}%"></div></div>
           </td>
           <td class="${statusClass(result.status)}">${escapeHtml(result.status)}</td>
+          <td>${subtests}</td>
           <td>${escapeHtml(displayTime)}</td>
         </tr>
       `;
@@ -359,7 +361,7 @@ function renderTests() {
           <span>${selectedTestcases().length}/${testcases.length} checked</span>
         </header>
         <table>
-          <thead><tr><th>Select</th><th>Testcase</th><th>Result</th><th>Time</th></tr></thead>
+          <thead><tr><th>Select</th><th>Testcase</th><th>Result</th><th>Subtestcases</th><th>Time</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </article>
@@ -568,6 +570,20 @@ function progressForStatus(status) {
   return 0;
 }
 
+function renderBvtSubtests(subtests = []) {
+  if (!subtests.length) return `<span class="subtest-empty">Waiting for BVT details</span>`;
+  const failedCount = subtests.filter((item) => item.status === "Failed" || item.status === "Timeout").length;
+  const shown = subtests.slice(0, 12).map((item) => `
+    <div class="subtest-row">
+      <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+      <strong class="${statusClass(item.status)}">${escapeHtml(item.status)}</strong>
+    </div>
+  `).join("");
+  const more = subtests.length > 12 ? `<div class="subtest-more">+${subtests.length - 12} more</div>` : "";
+  const summary = failedCount > 0 ? `<div class="subtest-summary">${failedCount} failed</div>` : "";
+  return `<div class="subtest-list">${summary}${shown}${more}</div>`;
+}
+
 function markRunningAs(status) {
   state.results.forEach((result, key) => {
     if (result.status === "Running" || result.status === "Executing") {
@@ -587,9 +603,22 @@ function collectResultFromLine(line) {
   if (start) {
     const serial = start[1];
     const tool = start[2].toLowerCase();
-    state.results.set(`${serial}:${tool}`, { status: "Executing", time: "00:00:00", startedAt: Date.now() });
+    state.results.set(`${serial}:${tool}`, { status: "Executing", time: "00:00:00", startedAt: Date.now(), subtests: [] });
     renderSummary();
     render();
+    return;
+  }
+  const subtest = line.match(/^\[([^\]]+)] BVT_SUBTEST\t([^\t]+)\t(.+)$/);
+  if (subtest) {
+    const serial = subtest[1];
+    const key = `${serial}:bvt`;
+    const previous = state.results.get(key) || { status: "Executing", time: "00:00:00", subtests: [] };
+    const nextSubtests = [...(previous.subtests || []), {
+      status: normalizeSubtestStatus(subtest[2]),
+      name: subtest[3],
+    }];
+    state.results.set(key, { ...previous, subtests: nextSubtests });
+    renderTests();
     return;
   }
   const match = line.match(/\[([^\]]+)] END ([^ ]+) .* result=([A-Z]+)/);
@@ -597,12 +626,10 @@ function collectResultFromLine(line) {
   const serial = match[1];
   const tool = match[2].toLowerCase();
   const rawStatus = match[3];
-  const status = tool === "sdt" && rawStatus === "NOTEXECUTED" && line.includes("exit=0")
-    ? "PASS"
-    : normalizeToolStatus(rawStatus);
+  const status = normalizeEndStatus(tool, rawStatus, line);
   const previous = state.results.get(`${serial}:${tool}`);
   const elapsed = previous?.startedAt ? Date.now() - previous.startedAt : Date.now() - state.runStartedAt;
-  state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed) });
+  state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed), subtests: previous?.subtests || [] });
   markNextToolRunning(serial, tool);
   renderSummary();
   render();
@@ -626,12 +653,29 @@ function markNextToolRunning(serial, completedTool) {
 
 function normalizeToolStatus(status) {
   if (status === "PASS") return "Pass";
+  if (status === "WARNING") return "Warning";
   if (status === "FAIL") return "Failed";
   return "Error";
 }
 
+function normalizeEndStatus(tool, rawStatus, line) {
+  if (tool === "sdt" && rawStatus === "NOTEXECUTED" && line.includes("exit=0")) return "Pass";
+  if (tool === "bvt" && rawStatus === "FAIL") {
+    const failed = Number(line.match(/\bfailed=(\d+)/)?.[1] || NaN);
+    if (Number.isFinite(failed) && failed <= 2) return "Warning";
+  }
+  return normalizeToolStatus(rawStatus);
+}
+
+function normalizeSubtestStatus(status) {
+  if (status === "PASS") return "Pass";
+  if (status === "FAIL") return "Failed";
+  if (status === "TIMEOUT") return "Timeout";
+  return "Not Executed";
+}
+
 function statusClass(status) {
-  return `status-${String(status || "Standby").toLowerCase()}`;
+  return `status-${String(status || "Standby").toLowerCase().replaceAll(" ", "-")}`;
 }
 
 function deviceProgress(serial) {
@@ -644,6 +688,7 @@ function deviceProgress(serial) {
   const partial = activeIndex >= 0 ? 0.55 : runningIndex >= 0 ? 0.18 : 0;
   const percent = Math.min(100, Math.round(((done + partial) / selected.length) * 100));
   const status = statuses.find((item) => item === "Error" || item === "Failed")
+    || statuses.find((item) => item === "Warning")
     || statuses.find((item) => item === "Executing")
     || statuses.find((item) => item === "Running")
     || (done === selected.length ? "Pass" : "Standby");

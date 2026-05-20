@@ -71,6 +71,7 @@ Opsi CLI:
 - Log proses disimpan di `atm-batch-launcher/runs/<timestamp>/<serial>/`.
 - Hasil utama tetap dibaca dari folder existing `results/`, hanya dari file yang dibuat/diubah setelah tool mulai berjalan agar file lama tidak dihitung sebagai hasil run baru.
 - BVT juga membaca result native CTS dari `tools/resource/BVT/<android-version>/android-cts/results/<timestamp>/test_result.xml` jika wrapper belum menyalin ke `results/<model>/<build>/BVT/bvt_result.xml`.
+- Khusus BVT, launcher mengeluarkan baris `BVT_SUBTEST` untuk setiap subtest yang ditemukan di XML result agar UI Tauri bisa menampilkan status subtest. Jika jumlah failed BVT maksimal 2, status akhir dianggap `WARNING`; lebih dari 2 tetap `FAIL`.
 - SDT di device/MTP memakai `/sdcard/SDTResults.zip`; setelah dipull ke PC tool menyimpan sebagai `SDTResults_XID.zip` dan mengekstrak `XID_SDT.xml`. Launcher mengenali dua bentuk lokal itu. Khusus SDT, file lokal terbaru tetap diterima walau timestamp-nya lebih lama dari start launcher, dan jika file lokal belum ketemu launcher mengecek sekaligus mencoba pull `/sdcard/SDTResults.zip` dari device.
 
 ## Enabled Tools

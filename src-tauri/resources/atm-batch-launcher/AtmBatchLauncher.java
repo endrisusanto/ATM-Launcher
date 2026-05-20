@@ -362,6 +362,11 @@ public class AtmBatchLauncher {
                         : inspected;
                 log("[" + device.serial + "] END " + tool.displayName + " exit=" + outcome.exitCode
                         + " duration=" + outcome.durationSeconds + "s result=" + summary.status + " " + summary.detail);
+                if (tool == ToolProfile.BVT) {
+                    for (BvtSubtest subtest : bvtSubtestsFromSummary(summary)) {
+                        log("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name);
+                    }
+                }
                 updateDeviceLastResult(device, tool.displayName + ": " + summary.status);
                 if (outcome.timedOut || outcome.exitCode != 0 || !isSuccessfulStatus(summary.status)) {
                     updateDeviceStatus(device, cancelRequested ? "Cancelled" : "Error in " + tool.displayName);
@@ -483,7 +488,8 @@ public class AtmBatchLauncher {
         int pass = intAttr(text, "pass", -1);
         int modulesDone = intAttr(text, "modules_done", -1);
         int modulesTotal = intAttr(text, "modules_total", -1);
-        if (failed > 0) return new ResultSummary("FAIL", "failed=" + failed + " file=" + xml);
+        if (failed > 0 && failed <= 2) return new ResultSummary("WARNING", "failed=" + failed + " pass=" + pass + " file=" + xml);
+        if (failed > 2) return new ResultSummary("FAIL", "failed=" + failed + " pass=" + pass + " file=" + xml);
         if (modulesTotal > 0 && modulesDone >= 0 && modulesDone < modulesTotal) {
             return new ResultSummary("INCOMPLETE", "modules=" + modulesDone + "/" + modulesTotal + " file=" + xml);
         }
@@ -807,6 +813,11 @@ public class AtmBatchLauncher {
                         : inspected;
                 System.out.println("[" + device.serial + "] END " + tool.displayName + " exit=" + outcome.exitCode
                         + " duration=" + outcome.durationSeconds + "s result=" + summary.status + " " + summary.detail);
+                if (tool == ToolProfile.BVT) {
+                    for (BvtSubtest subtest : bvtSubtestsFromSummary(summary)) {
+                        System.out.println("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name);
+                    }
+                }
                 if (outcome.exitCode != 0 || outcome.timedOut || !isSuccessfulStatus(summary.status)) ok = false;
             }
         } finally {
@@ -1047,7 +1058,8 @@ public class AtmBatchLauncher {
         int pass = intAttr(text, "pass", -1);
         int modulesDone = intAttr(text, "modules_done", -1);
         int modulesTotal = intAttr(text, "modules_total", -1);
-        if (failed > 0) return new ResultSummary("FAIL", "failed=" + failed + " file=" + xml);
+        if (failed > 0 && failed <= 2) return new ResultSummary("WARNING", "failed=" + failed + " pass=" + pass + " file=" + xml);
+        if (failed > 2) return new ResultSummary("FAIL", "failed=" + failed + " pass=" + pass + " file=" + xml);
         if (modulesTotal > 0 && modulesDone >= 0 && modulesDone < modulesTotal) {
             return new ResultSummary("INCOMPLETE", "modules=" + modulesDone + "/" + modulesTotal + " file=" + xml);
         }
@@ -1219,7 +1231,7 @@ public class AtmBatchLauncher {
     }
 
     private static boolean isSuccessfulStatus(String status) {
-        return "PASS".equalsIgnoreCase(status);
+        return "PASS".equalsIgnoreCase(status) || "WARNING".equalsIgnoreCase(status);
     }
 
     private static String processFailureDetail(ProcessOutcome outcome, ResultSummary inspected) {
@@ -1273,6 +1285,85 @@ public class AtmBatchLauncher {
     private static int intAttr(String text, String attr, int fallback) {
         Matcher matcher = Pattern.compile("\\b" + Pattern.quote(attr) + "=\"(\\d+)\"").matcher(text);
         return matcher.find() ? Integer.parseInt(matcher.group(1)) : fallback;
+    }
+
+    private static List<BvtSubtest> bvtSubtestsFromSummary(ResultSummary summary) {
+        if (summary == null || summary.detail == null) return List.of();
+        Matcher matcher = Pattern.compile("\\bfile=(.+)$").matcher(summary.detail);
+        if (!matcher.find()) return List.of();
+        Path xml = Paths.get(matcher.group(1).trim());
+        if (!Files.isRegularFile(xml)) return List.of();
+        try {
+            return parseBvtSubtests(xml);
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private static List<BvtSubtest> parseBvtSubtests(Path xml) throws IOException {
+        String text = Files.readString(xml, StandardCharsets.UTF_8);
+        List<BvtSubtest> subtests = new ArrayList<>();
+        Pattern modulePattern = Pattern.compile("<Module\\b([^>]*)>(.*?)</Module>", Pattern.DOTALL);
+        Matcher moduleMatcher = modulePattern.matcher(text);
+        while (moduleMatcher.find()) {
+            String module = xmlAttr(moduleMatcher.group(1), "name");
+            collectBvtSubtests(moduleMatcher.group(2), module, subtests);
+        }
+        if (subtests.isEmpty()) {
+            collectBvtSubtests(text, "", subtests);
+        }
+        return subtests;
+    }
+
+    private static void collectBvtSubtests(String text, String module, List<BvtSubtest> subtests) {
+        Pattern casePattern = Pattern.compile("<TestCase\\b([^>]*)>(.*?)</TestCase>", Pattern.DOTALL);
+        Matcher caseMatcher = casePattern.matcher(text);
+        while (caseMatcher.find()) {
+            String testCase = xmlAttr(caseMatcher.group(1), "name");
+            collectBvtTests(caseMatcher.group(2), module, testCase, subtests);
+        }
+        if (subtests.isEmpty()) {
+            collectBvtTests(text, module, "", subtests);
+        }
+    }
+
+    private static void collectBvtTests(String text, String module, String testCase, List<BvtSubtest> subtests) {
+        Pattern testPattern = Pattern.compile("<Test\\b([^>]*)/?>", Pattern.DOTALL);
+        Matcher testMatcher = testPattern.matcher(text);
+        while (testMatcher.find()) {
+            String attrs = testMatcher.group(1);
+            String name = xmlAttr(attrs, "name");
+            String result = xmlAttr(attrs, "result");
+            if (name.isBlank() || result.isBlank()) continue;
+            List<String> parts = new ArrayList<>();
+            if (!module.isBlank()) parts.add(module);
+            if (!testCase.isBlank()) parts.add(testCase);
+            parts.add(name);
+            subtests.add(new BvtSubtest(String.join(".", parts), normalizeBvtSubtestStatus(result)));
+        }
+    }
+
+    private static String normalizeBvtSubtestStatus(String result) {
+        String lower = result.toLowerCase(Locale.ROOT);
+        if ("pass".equals(lower)) return "PASS";
+        if ("fail".equals(lower)) return "FAIL";
+        if ("timeout".equals(lower)) return "TIMEOUT";
+        return "NOTEXECUTED";
+    }
+
+    private static String xmlAttr(String attrs, String name) {
+        Matcher matcher = Pattern.compile("\\b" + Pattern.quote(name) + "=\"([^\"]*)\"").matcher(attrs);
+        if (!matcher.find()) return "";
+        return matcher.group(1)
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace('\t', ' ')
+                .replace('\n', ' ')
+                .replace('\r', ' ')
+                .trim();
     }
 
     private static final class DeviceInfo {
@@ -1378,4 +1469,5 @@ public class AtmBatchLauncher {
     private record CommandResult(int exitCode, String output) {}
     private record ProcessOutcome(int exitCode, boolean timedOut, long durationSeconds) {}
     private record ResultSummary(String status, String detail) {}
+    private record BvtSubtest(String name, String status) {}
 }
