@@ -43,3 +43,13 @@ npm run build
 ```
 
 Jika build Tauri gagal karena dependency Linux WebKit belum ada, install paket WebKitGTK sesuai distro terlebih dahulu.
+
+## Release
+
+Push tag `v*` akan menjalankan GitHub Actions release build. Helper script berikut akan stage perubahan, commit jika ada perubahan, menaikkan versi tag, push branch, lalu push tag:
+
+```bash
+scripts/release-next.sh patch "Fix BVT crash NumberFormatException and SDT false NOTEXECUTED"
+```
+
+Gunakan `minor` atau `major` sebagai argumen pertama jika ingin menaikkan versi selain patch.
