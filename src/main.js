@@ -30,6 +30,8 @@ const testcases = [
   { tool: "sdt", name: "SDTDeviceTest", description: "Run SDT silent test package" },
 ];
 
+const terminalStatuses = ["Pass", "Failed", "Error"];
+
 const app = document.querySelector("#app");
 
 app.innerHTML = `
@@ -198,7 +200,7 @@ listen("atm-run-finished", (event) => {
   els.runBtn.disabled = false;
   els.cancelBtn.disabled = true;
   if (exitCode === 130) {
-    markRunningAs("CANCELLED");
+    markRunningAs("Cancelled");
     els.statusLine.textContent = "Cancelled";
   } else {
     els.statusLine.textContent = exitCode === 0 ? "Completed" : "Completed with errors";
@@ -239,6 +241,18 @@ function renderDevices() {
   els.deviceList.innerHTML = state.devices.map((device) => {
     const selected = state.selected.has(device.serial);
     const ready = device.state === "device";
+    const progress = deviceProgress(device.serial);
+    const flow = selected ? `
+      <div class="device-flow ${statusClass(progress.status)}">
+        <div class="device-flow-top">
+          <span>${escapeHtml(progress.label)}</span>
+          <strong>${progress.percent}%</strong>
+        </div>
+        <div class="device-flow-track">
+          <div class="device-flow-fill" style="width:${progress.percent}%"></div>
+        </div>
+      </div>
+    ` : "";
     return `
       <article class="device-card ${selected ? "selected" : ""} ${ready ? "" : "disabled"}" data-serial="${device.serial}" role="button" tabindex="${ready ? "0" : "-1"}">
         <div class="device-top">
@@ -257,6 +271,7 @@ function renderDevices() {
           <span><small>MODEM</small>${escapeHtml(device.modem || device.build || "-")}</span>
           <span><small>CSC</small>${escapeHtml(device.csc || "-")}</span>
         </div>
+        ${flow}
       </article>
     `;
   }).join("");
@@ -291,10 +306,10 @@ function renderTests() {
   els.testArea.innerHTML = visibleDevices.map((device) => {
     const rows = testcases.map((testcase) => {
       const key = `${device.serial}:${testcase.tool}`;
-      const result = state.results.get(key) || { status: "READY", time: "-" };
+      const result = state.results.get(key) || { status: "Standby", time: "-" };
       const checked = state.tools.includes(testcase.tool);
       const progress = progressForStatus(result.status);
-      const displayTime = result.status === "RUNNING" && result.startedAt
+      const displayTime = result.status === "Executing" && result.startedAt
         ? formatDuration(Date.now() - result.startedAt)
         : result.time;
       return `
@@ -303,9 +318,9 @@ function renderTests() {
           <td>
             <span class="test-name">${escapeHtml(testcase.name)}</span>
             <small>${escapeHtml(testcase.description)}</small>
-            <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
+            <div class="progress-track ${statusClass(result.status)}"><div class="progress-fill" style="width:${progress}%"></div></div>
           </td>
-          <td class="${result.status.toLowerCase()}">${escapeHtml(result.status)}</td>
+          <td class="${statusClass(result.status)}">${escapeHtml(result.status)}</td>
           <td>${escapeHtml(displayTime)}</td>
         </tr>
       `;
@@ -337,10 +352,10 @@ function renderTests() {
 }
 
 function renderSummary() {
-  state.summary.executed = Array.from(state.results.values()).filter((r) => ["PASS", "FAIL", "ERROR", "INCOMPLETE"].includes(r.status)).length;
-  state.summary.pass = Array.from(state.results.values()).filter((r) => r.status === "PASS").length;
-  state.summary.fail = Array.from(state.results.values()).filter((r) => r.status === "FAIL" || r.status === "ERROR").length;
-  state.summary.pending = state.running ? Math.max(0, state.selected.size * selectedTestcases().length - state.summary.executed) : 0;
+  state.summary.executed = Array.from(state.results.values()).filter((r) => terminalStatuses.includes(r.status)).length;
+  state.summary.pass = Array.from(state.results.values()).filter((r) => r.status === "Pass").length;
+  state.summary.fail = Array.from(state.results.values()).filter((r) => r.status === "Failed" || r.status === "Error").length;
+  state.summary.pending = state.running ? Math.max(0, selectedRunKeys().length - state.summary.executed) : 0;
   if (state.runStartedAt) state.summary.runtime = formatDuration(Date.now() - state.runStartedAt);
   els.executedMetric.textContent = state.summary.executed;
   els.pendingMetric.textContent = state.summary.pending;
@@ -428,8 +443,8 @@ async function runBatch() {
   state.runStartedAt = Date.now();
   state.results.clear();
   devices.forEach((serial) => {
-    tools.forEach((tool) => {
-      state.results.set(`${serial}:${tool}`, { status: "RUNNING", time: "00:00:00", startedAt: Date.now() });
+    tools.forEach((tool, index) => {
+      state.results.set(`${serial}:${tool}`, { status: index === 0 ? "Running" : "Standby", time: "-" });
     });
   });
   els.runBtn.disabled = true;
@@ -496,7 +511,7 @@ function failedToolIds() {
   return testcases
     .filter((testcase) => serials.some((serial) => {
       const status = state.results.get(`${serial}:${testcase.tool}`)?.status;
-      return status === "FAIL" || status === "ERROR";
+      return status === "Failed" || status === "Error";
     }))
     .map((testcase) => testcase.tool);
 }
@@ -510,14 +525,15 @@ function toggleTool(tool) {
 }
 
 function progressForStatus(status) {
-  if (status === "RUNNING") return 45;
-  if (["PASS", "FAIL", "ERROR", "INCOMPLETE", "CANCELLED"].includes(status)) return 100;
+  if (status === "Running") return 18;
+  if (status === "Executing") return 55;
+  if (terminalStatuses.includes(status) || status === "Cancelled") return 100;
   return 0;
 }
 
 function markRunningAs(status) {
   state.results.forEach((result, key) => {
-    if (result.status === "RUNNING") {
+    if (result.status === "Running" || result.status === "Executing") {
       state.results.set(key, { status, time: result.startedAt ? formatDuration(Date.now() - result.startedAt) : result.time });
     }
   });
@@ -534,19 +550,65 @@ function collectResultFromLine(line) {
   if (start) {
     const serial = start[1];
     const tool = start[2].toLowerCase();
-    state.results.set(`${serial}:${tool}`, { status: "RUNNING", time: "00:00:00", startedAt: Date.now() });
+    state.results.set(`${serial}:${tool}`, { status: "Executing", time: "00:00:00", startedAt: Date.now() });
     renderSummary();
-    renderTests();
+    render();
     return;
   }
   const match = line.match(/\[([^\]]+)] END ([^ ]+) .* result=([A-Z]+)/);
   if (!match) return;
   const serial = match[1];
   const tool = match[2].toLowerCase();
-  const status = match[3];
-  state.results.set(`${serial}:${tool}`, { status, time: formatDuration(Date.now() - state.runStartedAt) });
+  const status = normalizeToolStatus(match[3]);
+  const previous = state.results.get(`${serial}:${tool}`);
+  const elapsed = previous?.startedAt ? Date.now() - previous.startedAt : Date.now() - state.runStartedAt;
+  state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed) });
+  markNextToolRunning(serial, tool);
   renderSummary();
-  renderTests();
+  render();
+}
+
+function selectedRunKeys() {
+  return selectedDevices().flatMap((device) => selectedTestcases().map((testcase) => `${device.serial}:${testcase.tool}`));
+}
+
+function markNextToolRunning(serial, completedTool) {
+  const tools = selectedTestcases().map((testcase) => testcase.tool);
+  const index = tools.indexOf(completedTool);
+  const nextTool = index >= 0 ? tools[index + 1] : null;
+  if (!nextTool) return;
+  const key = `${serial}:${nextTool}`;
+  const current = state.results.get(key);
+  if (!current || current.status === "Standby") {
+    state.results.set(key, { status: "Running", time: "-" });
+  }
+}
+
+function normalizeToolStatus(status) {
+  if (status === "PASS") return "Pass";
+  if (status === "FAIL") return "Failed";
+  return "Error";
+}
+
+function statusClass(status) {
+  return `status-${String(status || "Standby").toLowerCase()}`;
+}
+
+function deviceProgress(serial) {
+  const selected = selectedTestcases();
+  if (!selected.length) return { percent: 0, status: "Standby", label: "Standby" };
+  const statuses = selected.map((testcase) => state.results.get(`${serial}:${testcase.tool}`)?.status || "Standby");
+  const done = statuses.filter((status) => terminalStatuses.includes(status) || status === "Cancelled").length;
+  const activeIndex = statuses.findIndex((status) => status === "Executing");
+  const runningIndex = statuses.findIndex((status) => status === "Running");
+  const partial = activeIndex >= 0 ? 0.55 : runningIndex >= 0 ? 0.18 : 0;
+  const percent = Math.min(100, Math.round(((done + partial) / selected.length) * 100));
+  const status = statuses.find((item) => item === "Error" || item === "Failed")
+    || statuses.find((item) => item === "Executing")
+    || statuses.find((item) => item === "Running")
+    || (done === selected.length ? "Pass" : "Standby");
+  const label = status === "Pass" && done !== selected.length ? "Standby" : status;
+  return { percent, status: label, label };
 }
 
 function formatDuration(ms) {

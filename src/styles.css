@@ -386,6 +386,35 @@ h2 {
   font-weight: 800;
 }
 
+.device-flow {
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.device-flow-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.device-flow-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #050606;
+}
+
+.device-flow-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width 220ms ease, background 220ms ease;
+}
+
 .devices-pane footer {
   color: #596060;
   font-size: 11px;
@@ -535,24 +564,47 @@ td:nth-child(4) {
 .progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--green);
+  background: currentColor;
   transition: width 180ms ease;
 }
 
-.pass {
+.pass,
+.status-pass {
   color: var(--green);
   font-weight: 900;
 }
 
 .fail,
-.error {
+.error,
+.status-failed {
   color: var(--red);
+  font-weight: 900;
+}
+
+.status-error {
+  color: #ff9a3d;
+  font-weight: 900;
+}
+
+.status-executing {
+  color: var(--yellow);
+  font-weight: 900;
+}
+
+.status-running {
+  color: var(--cyan);
+  font-weight: 900;
+}
+
+.status-standby {
+  color: var(--muted);
   font-weight: 900;
 }
 
 .incomplete,
 .ready,
-.cancelled {
+.cancelled,
+.status-cancelled {
   color: var(--yellow);
   font-weight: 900;
 }
