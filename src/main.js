@@ -31,14 +31,19 @@ const state = {
   },
   activeTasks: 0,
   pendingCtsAfterBatch: false,
+  lampStates: new Map(),
 };
 
+function formatStatus(status) {
+  return status === "Error" ? "Cek Log-nya blay" : escapeHtml(status);
+}
+
 const testcases = [
+  { tool: "cts_verifier", name: "CTS Verifier", description: "Android Compatibility Test Suite Verifier Auto" },
   { tool: "getprop", name: "GetpropSnapshot", description: "Collect device build properties" },
   { tool: "bvt", name: "BasicInfoTests", description: "Run BVT basic info compatibility checks" },
   { tool: "svt", name: "SVTPreloadValidation", description: "Run SVT preload validation" },
   { tool: "sdt", name: "SDTDeviceTest", description: "Run SDT silent test package" },
-  { tool: "cts_verifier", name: "CTS Verifier", description: "Android Compatibility Test Suite Verifier Auto" },
 ];
 
 const terminalStatuses = ["Pass", "Warning", "Failed", "Error"];
@@ -77,7 +82,6 @@ app.innerHTML = `
       <div class="toolbar">
         <button class="run-button" id="runBtn">Run Selected</button>
         <button class="ghost-button" id="cancelBtn" disabled>Cancel</button>
-        <button class="ghost-button lamp-button" id="lampBtn" title="Set selected device display timeout to 10 minutes and max brightness">Max Brightness</button>
         <div class="toolbar-spacer"></div>
         <label class="retry">Concurrency: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
         <label class="check"><input id="allTools" type="checkbox" checked /> All</label>
@@ -141,9 +145,8 @@ const els = {
   logBox: document.querySelector("#logBox"),
   runBtn: document.querySelector("#runBtn"),
   cancelBtn: document.querySelector("#cancelBtn"),
-  lampBtn: document.querySelector("#lampBtn"),
-  refreshBtn: document.querySelector("#refreshBtn"),
   unselectBtn: document.querySelector("#unselectBtn"),
+  refreshBtn: document.querySelector("#refreshBtn"),
   preflightBtn: document.querySelector("#preflightBtn"),
   settingsModal: document.querySelector("#settingsModal"),
   settingsCloseBtn: document.querySelector("#settingsCloseBtn"),
@@ -240,7 +243,6 @@ els.settingsCheckBtn.addEventListener("click", runPreflight);
 els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
-els.lampBtn.addEventListener("click", setLampOnSelectedDevices);
 // Removed ctsVerifier event listeners
 els.browseBtn.addEventListener("click", async () => {
   try {
@@ -275,7 +277,7 @@ function finishBatch(exitCode) {
     markRunningAs("Cancelled");
     els.statusLine.textContent = "Cancelled";
   } else {
-    els.statusLine.textContent = exitCode === 0 ? "Completed" : "Completed with errors";
+    els.statusLine.textContent = exitCode === 0 ? "Completed" : "Testnya udah selesai tapi ada beberapa catatan";
   }
   renderSummary();
   renderTests();
@@ -312,7 +314,6 @@ function updateRunButton() {
   const testcaseCount = selectedTestcases().length;
   els.runBtn.textContent = `Run Selected (${count})`;
   els.runBtn.disabled = state.running || count === 0 || testcaseCount === 0;
-  els.lampBtn.disabled = state.running || count === 0;
   els.allTools.checked = state.tools.length === testcases.length;
   updateSelectToggle();
 }
@@ -351,7 +352,10 @@ function renderDevices() {
             <strong>${escapeHtml(device.model || "Unknown")}</strong>
             <p><b>${escapeHtml(device.serial)}</b> · Android ${escapeHtml(device.android || "-")} · <span>${escapeHtml(device.state)}</span></p>
           </div>
-          <button class="result-pill" data-serial="${device.serial}" ${ready ? "" : "disabled"}>RESULT</button>
+          <div style="display:flex; gap:6px;">
+            <button class="result-pill lamp-button" data-lamp="${device.serial}" ${ready ? "" : "disabled"} title="Toggle Brightness">💡</button>
+            <button class="result-pill" data-serial="${device.serial}" ${ready ? "" : "disabled"}>RESULT</button>
+          </div>
         </div>
         <div class="device-meta">
           <span><small>SPL</small>${escapeHtml(device.security_patch || "-")}</span>
@@ -378,10 +382,16 @@ function renderDevices() {
       card.click();
     });
   });
-  els.deviceList.querySelectorAll(".result-pill").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
+  els.deviceList.querySelectorAll("[data-serial].result-pill").forEach((button) => {
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
       openDeviceResults(button.dataset.serial);
+    });
+  });
+  els.deviceList.querySelectorAll("[data-lamp]").forEach((button) => {
+    button.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await toggleLamp(button.dataset.lamp);
     });
   });
 }
@@ -417,7 +427,7 @@ function renderTests() {
             <small>${escapeHtml(testcase.description)}</small>
             <div class="progress-track ${statusClass(result.status)}"><div class="progress-fill" style="width:${progress}%"></div></div>
           </td>
-          <td class="${statusClass(result.status)}">${escapeHtml(result.status)}</td>
+          <td class="${statusClass(result.status)}">${formatStatus(result.status)}</td>
           <td>${subtests}</td>
           <td>${escapeHtml(displayTime)}</td>
         </tr>
@@ -507,7 +517,7 @@ function renderCtsSubtests(serial) {
           <input type="checkbox" class="cts-test-check" data-testcase="${escapeHtml(test.testcase)}" ${checked ? "checked" : ""} ${state.running ? "disabled" : ""} />
           <span>${escapeHtml(test.testcase)}</span>
         </label>
-        <strong class="${statusClass(ctsDisplayStatus(result.status))}">${escapeHtml(result.status)}</strong>
+        <strong class="${statusClass(ctsDisplayStatus(result.status))}">${formatStatus(result.status)}</strong>
       </div>
     `;
   }).join("");
@@ -763,22 +773,15 @@ async function autoDetectAtmRoot() {
   }
 }
 
-async function setLampOnSelectedDevices() {
-  const devices = selectedDevices();
-  if (!devices.length) return;
-  els.lampBtn.disabled = true;
-  appendLog(`[launcher] Applying lamp shortcut: timeout=10m brightness=max devices=${devices.map((device) => device.serial).join(", ")}`);
+async function toggleLamp(serial) {
+  if (!serial) return;
+  const brighten = !state.lampStates.get(serial);
+  state.lampStates.set(serial, brighten);
+  appendLog(`[launcher] Toggling lamp for ${serial}: ${brighten ? "max" : "min"} brightness`);
   try {
-    for (const device of devices) {
-      try {
-        await invoke("set_device_lamp", { serial: device.serial });
-        appendLog(`[launcher] Lamp shortcut applied on ${device.serial}`);
-      } catch (error) {
-        appendLog(`[launcher] Lamp shortcut failed on ${device.serial}: ${error}`);
-      }
-    }
-  } finally {
-    updateRunButton();
+    await invoke("set_device_lamp", { serial, brighten });
+  } catch (error) {
+    appendLog(`[launcher] Failed to toggle lamp for ${serial}: ${error}`);
   }
 }
 
@@ -938,7 +941,7 @@ function renderBvtSubtests(subtests = []) {
   const shown = failed.slice(0, 12).map((item) => `
     <div class="subtest-row">
       <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-      <strong class="${statusClass(item.status)}">${escapeHtml(item.status)}</strong>
+      <strong class="${statusClass(item.status)}">${formatStatus(item.status)}</strong>
     </div>
   `).join("");
   const more = failed.length > 12 ? `<div class="subtest-more">+${failed.length - 12} more failed</div>` : "";

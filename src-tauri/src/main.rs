@@ -622,8 +622,8 @@ async fn cleanup_cts_verifier(app: AppHandle, serial: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn set_device_lamp(serial: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || set_device_lamp_blocking(&serial))
+async fn set_device_lamp(serial: String, brighten: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_device_lamp_blocking(&serial, brighten))
         .await
         .map_err(|err| err.to_string())?
 }
@@ -1335,44 +1335,21 @@ fn cleanup_cts_verifier_blocking(app: &AppHandle, serial: &str) -> Result<(), St
     Ok(())
 }
 
-fn set_device_lamp_blocking(serial: &str) -> Result<(), String> {
-    let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
-    let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_HOME"]);
-    adb_device_output(
-        serial,
-        &[
-            "shell",
-            "settings",
-            "put",
-            "system",
-            "screen_brightness_mode",
-            "0",
-        ],
-    )?;
-    adb_device_output(
-        serial,
-        &[
-            "shell",
-            "settings",
-            "put",
-            "system",
-            "screen_brightness",
-            "255",
-        ],
-    )?;
-    adb_device_output(
-        serial,
-        &[
-            "shell",
-            "settings",
-            "put",
-            "system",
-            "screen_off_timeout",
-            "600000",
-        ],
-    )?;
+fn set_device_lamp_blocking(serial: &str, brighten: bool) -> Result<(), String> {
+    if brighten {
+        let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
+        let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_HOME"]);
+        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness_mode", "0"])?;
+        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness", "255"])?;
+        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_off_timeout", "600000"])?;
+    } else {
+        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness_mode", "0"])?;
+        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness", "10"])?;
+        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_off_timeout", "60000"])?;
+    }
     Ok(())
 }
+
 
 fn grant_cts_permissions(serial: &str) {
     for permission in [
