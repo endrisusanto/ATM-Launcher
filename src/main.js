@@ -523,7 +523,7 @@ function renderCtsSubtests(serial) {
 async function openCtsVerifierOnDevices() {
   const devices = selectedDevices();
   if (!devices.length) return;
-  for (const device of devices) {
+  await Promise.all(devices.map(async (device) => {
     appendLog(`[cts-verifier] Opening app on ${device.serial}...`);
     try {
       await invoke("open_cts_verifier", { serial: device.serial });
@@ -531,7 +531,7 @@ async function openCtsVerifierOnDevices() {
     } catch (error) {
       appendLog(`[cts-verifier] Open failed on ${device.serial}: ${error}`);
     }
-  }
+  }));
 }
 
 async function installCtsVerifierOnDevices() {
@@ -539,7 +539,7 @@ async function installCtsVerifierOnDevices() {
   if (!devices.length) return;
   setCtsActionsDisabled(true);
   try {
-    for (const device of devices) {
+    await Promise.all(devices.map(async (device) => {
       appendLog(`[cts-verifier] Installing APK set on ${device.serial}...`);
       try {
         await invoke("install_cts_verifier", { serial: device.serial, atmRoot: state.atmRoot || null });
@@ -547,7 +547,7 @@ async function installCtsVerifierOnDevices() {
       } catch (error) {
         appendLog(`[cts-verifier] Install failed on ${device.serial}: ${error}`);
       }
-    }
+    }));
   } finally {
     setCtsActionsDisabled(false);
   }
@@ -556,7 +556,7 @@ async function installCtsVerifierOnDevices() {
 async function cleanupCtsVerifierOnDevices() {
   const devices = selectedDevices();
   if (!devices.length) return;
-  for (const device of devices) {
+  await Promise.all(devices.map(async (device) => {
     appendLog(`[cts-verifier] Cleaning up APK set on ${device.serial}...`);
     try {
       await invoke("cleanup_cts_verifier", { serial: device.serial });
@@ -564,7 +564,7 @@ async function cleanupCtsVerifierOnDevices() {
     } catch (error) {
       appendLog(`[cts-verifier] Cleanup failed on ${device.serial}: ${error}`);
     }
-  }
+  }));
 }
 
 async function startSelectedCtsVerifierTests() {
@@ -573,7 +573,7 @@ async function startSelectedCtsVerifierTests() {
   if (!devices.length || !tests.length) return;
   setCtsActionsDisabled(true);
   try {
-    for (const device of devices) {
+    await Promise.all(devices.map(async (device) => {
       for (const test of tests) {
         appendLog(`[cts-verifier] Starting ${test.testcase} on ${device.serial}...`);
         try {
@@ -583,7 +583,7 @@ async function startSelectedCtsVerifierTests() {
           appendLog(`[cts-verifier] Start failed ${test.testcase} on ${device.serial}: ${error}`);
         }
       }
-    }
+    }));
   } finally {
     setCtsActionsDisabled(false);
   }
@@ -595,7 +595,7 @@ async function runSelectedCtsVerifierTests() {
   if (!devices.length || !tests.length) return;
   setCtsActionsDisabled(true);
   try {
-    for (const device of devices) {
+    await Promise.all(devices.map(async (device) => {
       for (const test of tests) {
         if (!state.running) break;
         const key = `${device.serial}:${test.testcase}`;
@@ -625,7 +625,7 @@ async function runSelectedCtsVerifierTests() {
         updateCtsVerifierToolResult(device.serial);
         renderTests();
       }
-    }
+    }));
   } finally {
     setCtsActionsDisabled(false);
   }
@@ -634,7 +634,7 @@ async function runSelectedCtsVerifierTests() {
 async function pullCtsVerifierReports() {
   const devices = selectedDevices();
   if (!devices.length) return;
-  for (const device of devices) {
+  await Promise.all(devices.map(async (device) => {
     appendLog(`[cts-verifier] Pulling reports from ${device.serial}...`);
     try {
       const path = await invoke("pull_cts_verifier_results", { serial: device.serial, atmRoot: state.atmRoot || null });
@@ -642,7 +642,7 @@ async function pullCtsVerifierReports() {
     } catch (error) {
       appendLog(`[cts-verifier] Pull failed on ${device.serial}: ${error}`);
     }
-  }
+  }));
 }
 
 function setCtsActionsDisabled(disabled) {
