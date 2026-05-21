@@ -282,7 +282,7 @@ function finishBatch(exitCode) {
   renderSummary();
   renderTests();
   updateRunButton();
-  if (exitCode === 0) startDollarConfetti();
+  if (exitCode !== 130) startDollarConfetti();
 }
 
 listen("atm-run-finished", (event) => {
