@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -1109,16 +1109,11 @@ fn run_cts_verifier_test_blocking(
 fn clear_results(
     atm_root: Option<String>,
     serials: Vec<String>,
-    tools: Vec<String>,
-) -> Result<(), String> {
+    _tools: Vec<String>,
+) -> Result<Vec<String>, String> {
     let root = resolve_atm_root(atm_root)?;
-    let result_folders: Vec<&'static str> = tools
-        .iter()
-        .filter_map(|tool| result_folder_for_tool(tool))
-        .collect();
-    if result_folders.is_empty() {
-        return Ok(());
-    }
+    let mut archived = Vec::new();
+    let mut handled_build_dirs = HashSet::new();
 
     for serial in serials {
         let model = adb_device_output(&serial, &["shell", "getprop", "ro.product.model"])
@@ -1137,15 +1132,19 @@ fn clear_results(
                 "unknown-build",
             ])));
 
-        for folder in &result_folders {
-            let target_dir = build_dir.join(folder);
-            if target_dir.exists() {
-                let _ = std::fs::remove_dir_all(&target_dir);
+        if handled_build_dirs.insert(build_dir.clone()) {
+            if let Some(archive_dir) = archive_result_dir_if_exists(&build_dir)? {
+                archived.push(format!(
+                    "{} -> {}",
+                    build_dir.display(),
+                    archive_dir.display()
+                ));
             }
+            std::fs::create_dir_all(&build_dir)
+                .map_err(|err| format!("Cannot create {}: {err}", build_dir.display()))?;
         }
-        let _ = std::fs::create_dir_all(&build_dir);
     }
-    Ok(())
+    Ok(archived)
 }
 
 fn main() {
@@ -1999,18 +1998,40 @@ fn safe_path_segment(value: &str) -> String {
         .collect()
 }
 
-fn result_folder_for_tool(tool: &str) -> Option<&'static str> {
-    match tool.trim().to_lowercase().as_str() {
-        "getprop" => Some("Getprop"),
-        "bvt" => Some("BVT"),
-        "svt" => Some("SVT"),
-        "sdt" => Some("SDT"),
-        "cts_verifier" => Some("CTSVerifier"),
-        "fmdut" => Some("FMDUT"),
-        "cschecker" | "csc_checker" => Some("CSCChecker"),
-        "atmoctopus" | "atm_octopus" => Some("AtmOctopus"),
-        _ => None,
+fn archive_result_dir_if_exists(build_dir: &Path) -> Result<Option<PathBuf>, String> {
+    if !build_dir.exists() {
+        return Ok(None);
     }
+    if !build_dir.is_dir() {
+        return Err(format!(
+            "Result path exists but is not a directory: {}",
+            build_dir.display()
+        ));
+    }
+    let archive_dir = next_available_suffix_path(build_dir);
+    std::fs::rename(build_dir, &archive_dir).map_err(|err| {
+        format!(
+            "Cannot archive {} to {}: {err}",
+            build_dir.display(),
+            archive_dir.display()
+        )
+    })?;
+    Ok(Some(archive_dir))
+}
+
+fn next_available_suffix_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let base_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("results");
+    for index in 1.. {
+        let candidate = parent.join(format!("{base_name}_{index}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("suffix index loop is unbounded")
 }
 
 fn redact_wifi_output(output: &str, password: Option<&str>) -> String {

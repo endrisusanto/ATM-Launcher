@@ -858,10 +858,14 @@ async function runBatch() {
   }
 
   try {
-    await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices, tools });
-    appendLog(`[launcher] Selected test result folders cleared for devices: ${devices.join(", ")} tools=${tools.join(", ")}.`);
+    const archived = await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices, tools });
+    if (archived?.length) {
+      archived.forEach((item) => appendLog(`[launcher] Archived previous results: ${item}`));
+    } else {
+      appendLog("[launcher] No previous result folders found; starting with fresh result folders.");
+    }
   } catch (err) {
-    appendLog(`[launcher] Warning: Failed to clear results: ${err}`);
+    appendLog(`[launcher] Warning: Failed to prepare result folders: ${err}`);
   }
 
   const javaTools = tools.filter(t => t !== "cts_verifier");
