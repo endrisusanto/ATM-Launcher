@@ -530,6 +530,7 @@ async function runSelectedCtsVerifierTests() {
         const key = `${device.serial}:${test.testcase}`;
         const startedAt = Date.now();
         state.ctsVerifier.results.set(key, { status: "Running", time: "00:00:00" });
+        updateCtsVerifierToolResult(device.serial);
         renderTests();
         appendLog(`[cts-verifier] Running ${test.testcase} on ${device.serial}...`);
         try {
@@ -550,7 +551,8 @@ async function runSelectedCtsVerifierTests() {
           });
           appendLog(`[cts-verifier] Run failed ${test.testcase} on ${device.serial}: ${error}`);
         }
-        renderCtsVerifier();
+        updateCtsVerifierToolResult(device.serial);
+        renderTests();
       }
     }
   } finally {
@@ -595,6 +597,34 @@ function ctsDisplayStatus(status) {
   if (status === "Done") return "Pass";
   if (status === "-") return "Standby";
   return status;
+}
+
+function updateCtsVerifierToolResult(serial) {
+  const selectedTests = state.ctsVerifier.tests.filter((test) => state.ctsVerifier.selected.has(test.testcase));
+  const key = `${serial}:cts_verifier`;
+  const previous = state.results.get(key) || { status: "Running", time: "00:00:00", startedAt: Date.now() };
+  if (!selectedTests.length) {
+    state.results.set(key, { ...previous, status: "Standby", time: "-" });
+    return;
+  }
+
+  const statuses = selectedTests.map((test) => state.ctsVerifier.results.get(`${serial}:${test.testcase}`)?.status || "Standby");
+  let status = "Standby";
+  if (statuses.some((item) => item === "Running")) {
+    status = "Running";
+  } else if (statuses.some((item) => item === "Failed" || item === "Error")) {
+    status = "Failed";
+  } else if (statuses.every((item) => item === "Pass" || item === "Done")) {
+    status = "Pass";
+  }
+
+  const elapsed = previous.startedAt ? formatDuration(Date.now() - previous.startedAt) : previous.time;
+  state.results.set(key, {
+    ...previous,
+    status,
+    time: status === "Standby" ? previous.time : elapsed,
+  });
+  renderSummary();
 }
 
 function renderLog() {
