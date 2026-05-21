@@ -517,6 +517,78 @@ fn open_device_results(serial: String, atm_root: Option<String>) -> Result<Strin
     Ok(target.display().to_string())
 }
 
+#[tauri::command]
+fn open_cts_verifier(serial: String) -> Result<(), String> {
+    let adb = adb_path();
+    let mut start = Command::new(&adb);
+    start.args([
+        "-s",
+        &serial,
+        "shell",
+        "am",
+        "start",
+        "-n",
+        "com.android.cts.verifier/.CtsVerifierActivity",
+    ]);
+    match run_output(&mut start) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            let mut monkey = Command::new(&adb);
+            monkey.args(["-s", &serial, "shell", "monkey", "-p", "com.android.cts.verifier", "1"]);
+            run_output(&mut monkey).map(|_| ())
+        }
+    }
+}
+
+#[tauri::command]
+fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result<String, String> {
+    let root = resolve_atm_root(atm_root)?;
+    let target = root
+        .join("results")
+        .join(safe_path_segment(&serial))
+        .join("CTSVerifier");
+    std::fs::create_dir_all(&target)
+        .map_err(|err| format!("Cannot create {}: {err}", target.display()))?;
+
+    let adb = adb_path();
+    let mut sync = Command::new(&adb);
+    sync.args(["-s", &serial, "shell", "sync"]);
+    let _ = run_output(&mut sync);
+
+    let remote_paths = [
+        "/sdcard/verifierReports/.",
+        "/sdcard/VerifierReports/.",
+        "/storage/emulated/0/verifierReports/.",
+        "/storage/emulated/0/VerifierReports/.",
+        "/sdcard/Android/data/com.android.cts.verifier/files/VerifierReports/.",
+        "/sdcard/Android/data/com.android.cts.verifier/files/verifierReports/.",
+        "/storage/emulated/0/Android/data/com.android.cts.verifier/files/VerifierReports/.",
+        "/storage/emulated/0/Android/data/com.android.cts.verifier/files/verifierReports/.",
+    ];
+
+    let mut last_error = String::new();
+    for remote in remote_paths {
+        let mut pull = Command::new(&adb);
+        pull.args(["-s", &serial, "pull", remote, &target.to_string_lossy()]);
+        match run_output(&mut pull) {
+            Ok(output) => {
+                if output.to_lowercase().contains("pulled") || target_has_files(&target) {
+                    return Ok(target.display().to_string());
+                }
+            }
+            Err(error) => last_error = error,
+        }
+    }
+
+    if target_has_files(&target) {
+        return Ok(target.display().to_string());
+    }
+    Err(format!(
+        "No CTS Verifier reports found for {serial}. Export results in CTS Verifier first. {}",
+        last_error.trim()
+    ))
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -527,7 +599,9 @@ fn main() {
             list_devices,
             run_batch,
             cancel_batch,
-            open_device_results
+            open_device_results,
+            open_cts_verifier,
+            pull_cts_verifier_results
         ])
         .run(tauri::generate_context!())
         .expect("error while running ATM Batch Launcher");
@@ -749,4 +823,19 @@ fn check_dir(label: &str, path: PathBuf) -> String {
         if path.is_dir() { "OK  " } else { "FAIL" },
         path.display()
     )
+}
+
+fn safe_path_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') { ch } else { '_' })
+        .collect()
+}
+
+fn target_has_files(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .any(|entry| entry.path().is_file())
 }
