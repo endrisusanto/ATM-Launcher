@@ -650,6 +650,84 @@ fn start_cts_verifier_activity(serial: String, activity: String) -> Result<(), S
     adb_device_output(&serial, &["shell", "am", "start", "-n", &activity]).map(|_| ())
 }
 
+#[tauri::command]
+fn run_cts_verifier_test(
+    app: AppHandle,
+    serial: String,
+    testcase: String,
+    atm_root: Option<String>,
+) -> Result<String, String> {
+    let atm_path = atm_root.as_deref().map(Path::new);
+    ensure_cts_verifier_runtime(&app, &serial, atm_path)?;
+    run_cts_pre_test_setup(&serial);
+
+    let automation_class = automation_test_class(&testcase);
+    cts_log(&app, &serial, &format!("Running {testcase} via {automation_class}"));
+
+    let adb = adb_path();
+    let mut command = Command::new(&adb);
+    command.args([
+        "-s",
+        &serial,
+        "shell",
+        "am",
+        "instrument",
+        "-w",
+        "-r",
+        "-e",
+        "debug",
+        "false",
+        "-e",
+        "class",
+        &automation_class,
+        "com.example.autoctsver.test/androidx.test.runner.AndroidJUnitRunner",
+    ]);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("Failed to start CTS Verifier instrumentation: {err}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Cannot read instrumentation stdout".to_string())?;
+    let mut final_status = "Done".to_string();
+
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        cts_log(&app, &serial, trimmed);
+        if let Some(result) = trimmed.strip_prefix("INSTRUMENTATION_STATUS: result=") {
+            final_status = result.trim().to_string();
+            cts_log(&app, &serial, &format!("{testcase} result: {final_status}"));
+        } else if let Some(running) = trimmed.strip_prefix("INSTRUMENTATION_STATUS: testcase=") {
+            cts_log(&app, &serial, &format!("Current testcase: {}", running.trim()));
+        } else if let Some(command_text) = trimmed.strip_prefix("INSTRUMENTATION_STATUS: cmd=") {
+            run_cts_status_command(&app, &serial, command_text.trim(), &automation_class);
+        } else if let Some(apk_name) = trimmed.strip_prefix("INSTRUMENTATION_STATUS: InstallApk=") {
+            install_requested_cts_apk(&app, &serial, atm_path, apk_name.trim())?;
+        } else if let Some(apk_name) = trimmed.strip_prefix("INSTRUMENTATION_STATUS: PushAPK=") {
+            push_requested_cts_apk(&app, &serial, atm_path, apk_name.trim())?;
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("Failed waiting for instrumentation: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for line in stderr.lines().filter(|line| !line.trim().is_empty()) {
+        cts_log(&app, &serial, &format!("stderr: {}", line.trim()));
+    }
+    if !output.status.success() {
+        return Err(format!("Instrumentation exited with {}", output.status));
+    }
+    Ok(final_status)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -664,7 +742,8 @@ fn main() {
             open_cts_verifier,
             pull_cts_verifier_results,
             install_cts_verifier,
-            start_cts_verifier_activity
+            start_cts_verifier_activity,
+            run_cts_verifier_test
         ])
         .run(tauri::generate_context!())
         .expect("error while running ATM Batch Launcher");
@@ -965,6 +1044,125 @@ fn grant_cts_permissions(serial: &str) {
     ] {
         let _ = adb_device_output(serial, &["shell", "pm", "grant", "com.android.cts.verifier", permission]);
     }
+}
+
+fn package_installed(serial: &str, package_name: &str) -> bool {
+    adb_device_output(serial, &["shell", "pm", "path", package_name])
+        .map(|output| output.contains("package:"))
+        .unwrap_or(false)
+}
+
+fn automation_instrumentation_available(serial: &str) -> bool {
+    adb_device_output(serial, &["shell", "pm", "list", "instrumentation"])
+        .map(|output| output.contains("com.example.autoctsver.test/androidx.test.runner.AndroidJUnitRunner"))
+        .unwrap_or(false)
+}
+
+fn ensure_cts_verifier_runtime(app: &AppHandle, serial: &str, atm_root: Option<&Path>) -> Result<(), String> {
+    let needs_core = !package_installed(serial, "com.android.cts.verifier")
+        || !package_installed(serial, "com.android.cts.emptydeviceowner");
+    let needs_automation = !package_installed(serial, "com.example.autoctsver")
+        || !package_installed(serial, "com.example.autoctsver.test")
+        || !automation_instrumentation_available(serial);
+
+    if !needs_core && !needs_automation {
+        cts_log(app, serial, "CTS Verifier runtime verified.");
+        return Ok(());
+    }
+
+    let resource_root = resolve_cts_resource_root(app, atm_root)?;
+    if needs_core {
+        let (apk_dir, _) = resolve_cts_apk_dir(app, serial, &resource_root)?;
+        cts_log(app, serial, "Installing missing CTS Verifier core APKs...");
+        install_apk(serial, &apk_dir.join("CtsVerifier.apk"), &["-g", "-t"])?;
+        install_apk(serial, &apk_dir.join("CtsEmptyDeviceOwner.apk"), &["-t"])?;
+        install_optional_apk(serial, &apk_dir.join("CtsPermissionApp.apk"));
+        grant_cts_permissions(serial);
+    }
+    if needs_automation {
+        cts_log(app, serial, "Installing missing AutoCtsVerifier automation APKs...");
+        let automation_root = resource_root.join("ApkTest");
+        install_apk(serial, &automation_root.join("AutoCtsVerifier-debug.apk"), &["-t", "-g"])?;
+        install_apk(serial, &automation_root.join("AutoCtsVerifier-debug-androidTest.apk"), &["-t", "-g"])?;
+        if !automation_instrumentation_available(serial) {
+            return Err("AutoCtsVerifier instrumentation runner is not available after install.".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn convert_legacy_testcase_name(testcase: &str) -> String {
+    testcase
+        .chars()
+        .filter(|character| {
+            !matches!(
+                character,
+                ' ' | '\t' | '-' | '*' | ':' | '+' | '(' | ')' | '#' | '/' | '_' | ',' | '&'
+            )
+        })
+        .collect()
+}
+
+fn automation_test_class(testcase: &str) -> String {
+    let converted = convert_legacy_testcase_name(testcase);
+    let converted = if converted.contains("6DoF") {
+        format!("_{converted}")
+    } else {
+        converted
+    };
+    format!("com.example.autoctsver.ExampleInstrumentedTest#{converted}")
+}
+
+fn run_cts_pre_test_setup(serial: &str) {
+    let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
+    let _ = adb_device_output(serial, &["shell", "locksettings", "clear", "--old", "1111"]);
+    let _ = adb_device_output(serial, &["shell", "locksettings", "set-disabled", "true"]);
+    let _ = adb_device_output(serial, &["shell", "settings", "put", "system", "accelerometer_rotation", "0"]);
+    let _ = adb_device_output(serial, &["shell", "settings", "put", "system", "user_rotation", "0"]);
+}
+
+fn run_cts_status_command(app: &AppHandle, serial: &str, command_text: &str, automation_class: &str) {
+    let replaced = command_text.replace(
+        "DEFAULT_CMD",
+        &format!(
+            "-e class {} com.example.autoctsver.test/androidx.test.runner.AndroidJUnitRunner",
+            automation_class
+        ),
+    );
+    let parts: Vec<&str> = replaced.split_whitespace().collect();
+    if parts.is_empty() {
+        return;
+    }
+    cts_log(app, serial, &format!("Executing requested ADB command: {replaced}"));
+    let _ = adb_device_output(serial, &parts);
+}
+
+fn install_requested_cts_apk(app: &AppHandle, serial: &str, atm_root: Option<&Path>, apk_name: &str) -> Result<(), String> {
+    let resource_root = resolve_cts_resource_root(app, atm_root)?;
+    let (apk_dir, _) = resolve_cts_apk_dir(app, serial, &resource_root)?;
+    let apk_path = apk_dir.join(apk_name);
+    cts_log(app, serial, &format!("Installing requested APK: {apk_name}"));
+    if apk_name.contains("CtsEmptyDeviceOwner") {
+        install_apk(serial, &apk_path, &["-t"])
+    } else if apk_name.contains("CtsVerifierInstantApp") {
+        install_apk(serial, &apk_path, &["--instant"])
+    } else {
+        install_apk(serial, &apk_path, &["-g"])
+    }
+}
+
+fn push_requested_cts_apk(app: &AppHandle, serial: &str, atm_root: Option<&Path>, apk_name: &str) -> Result<(), String> {
+    let resource_root = resolve_cts_resource_root(app, atm_root)?;
+    let (apk_dir, _) = resolve_cts_apk_dir(app, serial, &resource_root)?;
+    let apk_path = apk_dir.join(apk_name);
+    if !apk_path.is_file() {
+        return Err(format!("Missing APK: {}", apk_path.display()));
+    }
+    let apk = apk_path.to_string_lossy();
+    cts_log(app, serial, &format!("Pushing requested APK: {apk_name}"));
+    let _ = adb_device_output(serial, &["push", &apk, "/data/local/tmp/"]);
+    let _ = adb_device_output(serial, &["push", &apk, "/sdcard"]);
+    Ok(())
 }
 
 fn parse_getprop_line(line: &str) -> Option<(String, String)> {

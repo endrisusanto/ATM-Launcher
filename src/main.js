@@ -27,6 +27,7 @@ const state = {
   ctsVerifier: {
     tests: [],
     selected: new Set(),
+    results: new Map(),
   },
 };
 
@@ -142,6 +143,7 @@ app.innerHTML = `
           <button class="ghost-button" id="ctsInstallBtn">Install APKs</button>
           <button class="ghost-button" id="ctsOpenBtn">Open App</button>
           <button class="ghost-button" id="ctsStartBtn">Start Selected</button>
+          <button class="ghost-button" id="ctsRunBtn">Run Auto</button>
           <button class="run-button" id="ctsPullBtn">Pull Reports</button>
         </div>
         <div class="cts-body" id="ctsBody"></div>
@@ -185,6 +187,7 @@ const els = {
   ctsInstallBtn: document.querySelector("#ctsInstallBtn"),
   ctsOpenBtn: document.querySelector("#ctsOpenBtn"),
   ctsStartBtn: document.querySelector("#ctsStartBtn"),
+  ctsRunBtn: document.querySelector("#ctsRunBtn"),
   ctsPullBtn: document.querySelector("#ctsPullBtn"),
   ctsBody: document.querySelector("#ctsBody"),
 };
@@ -240,6 +243,7 @@ els.ctsSelectAllBtn.addEventListener("click", toggleAllCtsTests);
 els.ctsInstallBtn.addEventListener("click", installCtsVerifierOnDevices);
 els.ctsOpenBtn.addEventListener("click", openCtsVerifierOnDevices);
 els.ctsStartBtn.addEventListener("click", startSelectedCtsVerifierTests);
+els.ctsRunBtn.addEventListener("click", runSelectedCtsVerifierTests);
 els.ctsPullBtn.addEventListener("click", pullCtsVerifierReports);
 els.browseBtn.addEventListener("click", async () => {
   try {
@@ -510,14 +514,18 @@ function renderCtsVerifier() {
         <span>${state.ctsVerifier.selected.size}/${tests.length} selected</span>
       </header>
       <table>
-        <thead><tr><th>Select</th><th>Testcase</th><th>Activity</th></tr></thead>
+        <thead><tr><th>Select</th><th>Testcase</th><th>Result</th><th>Time</th><th>Activity</th></tr></thead>
         <tbody>
           ${tests.map((test) => {
             const checked = state.ctsVerifier.selected.has(test.testcase);
+            const resultKey = `${device.serial}:${test.testcase}`;
+            const result = state.ctsVerifier.results.get(resultKey) || { status: "-", time: "-" };
             return `
               <tr>
                 <td><button class="row-check ${checked ? "checked" : ""}" data-cts-test="${escapeHtml(test.testcase)}" title="Select testcase">${checked ? "✓" : ""}</button></td>
                 <td><span class="test-name">${escapeHtml(test.testcase)}</span></td>
+                <td class="${statusClass(ctsDisplayStatus(result.status))}">${escapeHtml(result.status)}</td>
+                <td>${escapeHtml(result.time)}</td>
                 <td><small>${escapeHtml(test.activity)}</small></td>
               </tr>
             `;
@@ -591,6 +599,45 @@ async function startSelectedCtsVerifierTests() {
   }
 }
 
+async function runSelectedCtsVerifierTests() {
+  const devices = selectedDevices();
+  const tests = state.ctsVerifier.tests.filter((test) => state.ctsVerifier.selected.has(test.testcase));
+  if (!devices.length || !tests.length) return;
+  setCtsActionsDisabled(true);
+  try {
+    for (const device of devices) {
+      for (const test of tests) {
+        const key = `${device.serial}:${test.testcase}`;
+        const startedAt = Date.now();
+        state.ctsVerifier.results.set(key, { status: "Running", time: "00:00:00" });
+        renderCtsVerifier();
+        appendLog(`[cts-verifier] Running ${test.testcase} on ${device.serial}...`);
+        try {
+          const status = await invoke("run_cts_verifier_test", {
+            serial: device.serial,
+            testcase: test.testcase,
+            atmRoot: state.atmRoot || null,
+          });
+          state.ctsVerifier.results.set(key, {
+            status: normalizeCtsResult(status),
+            time: formatDuration(Date.now() - startedAt),
+          });
+          appendLog(`[cts-verifier] ${test.testcase} on ${device.serial}: ${status}`);
+        } catch (error) {
+          state.ctsVerifier.results.set(key, {
+            status: "Failed",
+            time: formatDuration(Date.now() - startedAt),
+          });
+          appendLog(`[cts-verifier] Run failed ${test.testcase} on ${device.serial}: ${error}`);
+        }
+        renderCtsVerifier();
+      }
+    }
+  } finally {
+    setCtsActionsDisabled(false);
+  }
+}
+
 async function pullCtsVerifierReports() {
   const devices = selectedDevices();
   if (!devices.length) return;
@@ -606,10 +653,24 @@ async function pullCtsVerifierReports() {
 }
 
 function setCtsActionsDisabled(disabled) {
-  [els.ctsLoadBtn, els.ctsSelectAllBtn, els.ctsInstallBtn, els.ctsOpenBtn, els.ctsStartBtn, els.ctsPullBtn]
+  [els.ctsLoadBtn, els.ctsSelectAllBtn, els.ctsInstallBtn, els.ctsOpenBtn, els.ctsStartBtn, els.ctsRunBtn, els.ctsPullBtn]
     .forEach((button) => {
       button.disabled = disabled;
     });
+}
+
+function normalizeCtsResult(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "pass" || normalized === "passed") return "Pass";
+  if (normalized === "running" || normalized === "executing") return "Running";
+  if (normalized === "done") return "Done";
+  return "Failed";
+}
+
+function ctsDisplayStatus(status) {
+  if (status === "Done") return "Pass";
+  if (status === "-") return "Standby";
+  return status;
 }
 
 function renderLog() {
