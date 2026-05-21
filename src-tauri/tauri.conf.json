@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ATM Bersama by endri.s@samsung.com",
+  "productName": "ATM Bersama",
   "version": "0.1.0",
   "identifier": "com.atm.batch.launcher",
   "build": {
@@ -12,8 +12,8 @@
   "app": {
     "windows": [
       {
-        "title": "ATM Batch Launcher",
-        "width": 1920,
+        "title": "ATM Bersama by endri.s@samsung.com",
+        "width": 1720,
         "height": 1080,
         "minWidth": 1180,
         "minHeight": 720,

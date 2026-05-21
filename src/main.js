@@ -30,7 +30,7 @@ const state = {
     results: new Map(),
   },
   activeTasks: 0,
-  pendingCtsAfterBatch: false,
+  pendingJavaAfterCts: null,
   lampStates: new Map(),
 };
 
@@ -287,18 +287,7 @@ function finishBatch(exitCode) {
 
 listen("atm-run-finished", (event) => {
   const exitCode = Number(event.payload?.exit_code || 0);
-  if (state.pendingCtsAfterBatch) {
-    state.pendingCtsAfterBatch = false;
-    if (exitCode === 130) {
-      finishBatch(exitCode);
-      return;
-    }
-    appendLog("[cts-verifier] Java batch finished; starting CTS Verifier sequence...");
-    runCtsVerifierSequence(exitCode);
-    return;
-  }
-  state.activeTasks--;
-  if (state.activeTasks <= 0) finishBatch(exitCode);
+  finishBatch(exitCode);
 });
 
 function render() {
@@ -312,6 +301,12 @@ function render() {
 function updateRunButton() {
   const count = state.selected.size;
   const testcaseCount = selectedTestcases().length;
+  
+  if (els.concurrencyInput && !state.running) {
+    els.concurrencyInput.value = count > 0 ? count : 1;
+    state.concurrency = Math.max(1, count);
+  }
+
   els.runBtn.textContent = `Run Selected (${count})`;
   els.runBtn.disabled = state.running || count === 0 || testcaseCount === 0;
   els.allTools.checked = state.tools.length === testcases.length;
@@ -601,6 +596,7 @@ async function runSelectedCtsVerifierTests() {
   try {
     for (const device of devices) {
       for (const test of tests) {
+        if (!state.running) break;
         const key = `${device.serial}:${test.testcase}`;
         const startedAt = Date.now();
         state.ctsVerifier.results.set(key, { status: "Running", time: "00:00:00" });
@@ -805,8 +801,7 @@ async function runBatch() {
   state.running = true;
   state.runStartedAt = Date.now();
   state.results.clear();
-  state.pendingCtsAfterBatch = false;
-  state.activeTasks = javaTools.length > 0 || runCts ? 1 : 0;
+  state.pendingJavaAfterCts = null;
 
   devices.forEach((serial) => {
     tools.forEach((tool, index) => {
@@ -824,35 +819,31 @@ async function runBatch() {
   render();
   try {
     if (runCts && javaTools.length > 0) {
-      state.pendingCtsAfterBatch = true;
-      appendLog("[cts-verifier] Queued after Java tools complete.");
-    }
-
-    if (javaTools.length > 0) {
+      state.pendingJavaAfterCts = javaTools;
+      appendLog("[cts-verifier] Starting CTS Verifier sequence (Java tools queued after)...");
+      runCtsVerifierSequence();
+    } else if (runCts) {
+      appendLog("[cts-verifier] Starting CTS Verifier sequence...");
+      runCtsVerifierSequence();
+    } else if (javaTools.length > 0) {
       await invoke("run_batch", {
         request: {
           devices,
           tools: javaTools,
-          concurrency: state.concurrency,
+          concurrency: parseInt(els.concurrencyInput?.value || "1", 10),
           update: false,
           atm_root: state.atmRoot || null,
         },
       });
     }
-
-    if (runCts && javaTools.length === 0) {
-      appendLog("[cts-verifier] Starting CTS Verifier sequence...");
-      runCtsVerifierSequence(0);
-    }
   } catch (error) {
     appendLog(`[launcher] Run failed: ${error}`);
-    state.pendingCtsAfterBatch = false;
     finishBatch(1);
   }
   render();
 }
 
-async function runCtsVerifierSequence(finalExitCode) {
+async function runCtsVerifierSequence() {
   try {
     await installCtsVerifierOnDevices();
     await runSelectedCtsVerifierTests();
@@ -860,8 +851,28 @@ async function runCtsVerifierSequence(finalExitCode) {
     appendLog(`[cts-verifier] Error: ${e}`);
   } finally {
     await cleanupCtsVerifierOnDevices();
-    state.activeTasks--;
-    if (state.activeTasks <= 0) finishBatch(finalExitCode);
+    
+    if (state.pendingJavaAfterCts && state.running) {
+      const javaTools = state.pendingJavaAfterCts;
+      state.pendingJavaAfterCts = null;
+      appendLog("[launcher] CTS Verifier sequence finished; starting Java tools...");
+      try {
+        await invoke("run_batch", {
+          request: {
+            devices: selectedDevices().map((d) => d.serial),
+            tools: javaTools,
+            concurrency: parseInt(els.concurrencyInput?.value || "1", 10),
+            update: false,
+            atm_root: state.atmRoot || null,
+          },
+        });
+      } catch (err) {
+        appendLog(`[launcher] Failed to start Java tools: ${err}`);
+        finishBatch(1);
+      }
+    } else {
+      finishBatch(0);
+    }
   }
 }
 
