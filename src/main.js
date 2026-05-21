@@ -144,6 +144,7 @@ app.innerHTML = `
         </section>
         <div class="settings-actions">
           <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
+          <button class="ghost-button" id="updateToolsBtn">Update Tools</button>
           <button class="ghost-button" id="settingsCheckBtn">Check</button>
           <button class="run-button" id="settingsSaveBtn">Save</button>
         </div>
@@ -167,6 +168,7 @@ const els = {
   settingsModal: document.querySelector("#settingsModal"),
   settingsCloseBtn: document.querySelector("#settingsCloseBtn"),
   autoDetectBtn: document.querySelector("#autoDetectBtn"),
+  updateToolsBtn: document.querySelector("#updateToolsBtn"),
   settingsCheckBtn: document.querySelector("#settingsCheckBtn"),
   settingsSaveBtn: document.querySelector("#settingsSaveBtn"),
   atmRootInput: document.querySelector("#atmRootInput"),
@@ -259,6 +261,7 @@ els.settingsModal.addEventListener("click", (event) => {
   if (event.target === els.settingsModal) closeSettings();
 });
 els.autoDetectBtn.addEventListener("click", autoDetectAtmRoot);
+els.updateToolsBtn.addEventListener("click", updateTools);
 els.settingsCheckBtn.addEventListener("click", runPreflight);
 els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
@@ -802,6 +805,20 @@ async function autoDetectAtmRoot() {
   }
 }
 
+async function updateTools() {
+  saveSettings(false);
+  els.settingsOutput.textContent = "Updating ATM tools resource...";
+  appendLog("[launcher] Updating ATM tools resource...");
+  try {
+    const message = await invoke("update_tools", { atmRoot: state.atmRoot || null });
+    els.settingsOutput.textContent = message;
+    appendLog(`[launcher] ${message}`);
+  } catch (error) {
+    els.settingsOutput.textContent = `Update tools failed: ${error}`;
+    appendLog(`[launcher] Update tools failed: ${error}`);
+  }
+}
+
 async function toggleLamp(serial) {
   if (!serial) return;
   const brighten = !state.lampStates.get(serial);
@@ -1160,7 +1177,11 @@ function deviceProgress(serial) {
     || statuses.find((item) => item === "Running")
     || (done === selected.length ? "Pass" : "Standby");
   const label = status === "Pass" && done !== selected.length ? "Standby" : status;
-  return { percent, status: label, label };
+  return { percent, status: label, label: deviceProgressLabel(label) };
+}
+
+function deviceProgressLabel(status) {
+  return status === "Error" ? "Testnya udah selesai dengan beberapa catatan" : status;
 }
 
 function formatDuration(ms) {

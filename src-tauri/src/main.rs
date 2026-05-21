@@ -206,6 +206,12 @@ fn connect_wifi(serial: String, ssid: String, password: Option<String>) -> Resul
 }
 
 #[tauri::command]
+fn update_tools(app: AppHandle, atm_root: Option<String>) -> Result<String, String> {
+    let root = resolve_atm_root(atm_root)?;
+    run_atm_agent_update(&app, &root)
+}
+
+#[tauri::command]
 fn run_batch(
     app: AppHandle,
     run_state: State<'_, RunState>,
@@ -442,6 +448,39 @@ fn bundled_batch_launcher_dir(app: &AppHandle) -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|path| path.join("AtmBatchLauncher.java").is_file())
+}
+
+fn run_atm_agent_update(app: &AppHandle, root: &Path) -> Result<String, String> {
+    let agent = root.join("AtmAgent.jar");
+    if !agent.is_file() {
+        return Err(format!("AtmAgent.jar not found: {}", agent.display()));
+    }
+    let java = java_bin();
+    let _ = app.emit(
+        "atm-run-log",
+        format!(
+            "[launcher] Running tools update with AtmAgent.jar in {}",
+            root.display()
+        ),
+    );
+    let mut command = Command::new(&java);
+    command.current_dir(root).args(["-jar", "AtmAgent.jar"]);
+    let output = run_output(&mut command)?;
+    let summary = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(if summary.trim().is_empty() {
+        "AtmAgent.jar update completed.".to_string()
+    } else {
+        format!("AtmAgent.jar update completed.\n{summary}")
+    })
 }
 
 fn ensure_batch_launcher_compat(root: &Path) -> Result<Option<String>, String> {
@@ -1029,6 +1068,7 @@ fn main() {
             preflight,
             list_devices,
             connect_wifi,
+            update_tools,
             run_batch,
             cancel_batch,
             open_device_results,

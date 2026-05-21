@@ -1183,6 +1183,10 @@ public class AtmBatchLauncher {
         if (tool == ToolProfile.BVT) {
             return fileName.equalsIgnoreCase(tool.resultFileName) || fileName.equalsIgnoreCase("test_result.xml");
         }
+        if (tool == ToolProfile.SVT) {
+            return fileName.equalsIgnoreCase(tool.resultFileName)
+                    || (lowerName.endsWith(".xml") && lowerName.contains("result"));
+        }
         if (tool == ToolProfile.SDT) {
             return (lowerName.startsWith("sdtresults_") && lowerName.endsWith(".zip"))
                     || lowerName.endsWith("_sdt.xml")
@@ -1264,6 +1268,12 @@ public class AtmBatchLauncher {
 
     private static String safeName(String value) {
         return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private static Path toolResultDir(DeviceInfo device, String folderName) {
+        String model = firstNonBlank(device.model, device.serial, "unknown-model");
+        String build = firstNonBlank(device.build, "unknown-build");
+        return ROOT.resolve("results").resolve(safeName(model)).resolve(safeName(build)).resolve(folderName);
     }
 
     private static String printable(List<String> command) {
@@ -1493,7 +1503,7 @@ public class AtmBatchLauncher {
             return switch (this) {
                 case GETPROP -> Arrays.asList(JAVA_BIN, "-jar", jar, "silent");
                 case BVT -> Arrays.asList(JAVA_BIN, "-jar", jar, device.serial);
-                case SVT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--silent", "-s", device.serial, "-o", runDir.resolve("SVT").toString());
+                case SVT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--silent", "-s", device.serial, "-o", toolResultDir(device, "SVT").toString());
                 case SDT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--silent");
                 default -> Arrays.asList(JAVA_BIN, "-jar", jar);
             };
