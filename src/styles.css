@@ -842,3 +842,25 @@ td:nth-child(5) {
   margin-top: 32px;
   padding: 36px;
 }
+
+/* Confetti Animation */
+.confetti {
+  position: fixed;
+  top: -10vh;
+  font-size: 24px;
+  user-select: none;
+  pointer-events: none;
+  z-index: 9999;
+  animation: fall linear infinite;
+}
+
+@keyframes fall {
+  0% {
+    transform: translateY(-10vh) rotate(0deg) translateX(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(360deg) translateX(20px);
+    opacity: 0;
+  }
+}

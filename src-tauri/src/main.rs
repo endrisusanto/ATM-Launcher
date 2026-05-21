@@ -946,6 +946,17 @@ fn run_cts_verifier_test_blocking(
     Ok(final_status)
 }
 
+#[tauri::command]
+fn clear_results(atm_root: Option<String>) -> Result<(), String> {
+    let root = resolve_atm_root(atm_root)?;
+    let results_dir = root.join("results");
+    if results_dir.exists() {
+        let _ = std::fs::remove_dir_all(&results_dir);
+    }
+    let _ = std::fs::create_dir_all(&results_dir);
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -963,7 +974,8 @@ fn main() {
             set_device_lamp,
             install_cts_verifier,
             start_cts_verifier_activity,
-            run_cts_verifier_test
+            run_cts_verifier_test,
+            clear_results
         ])
         .run(tauri::generate_context!())
         .expect("error while running ATM Batch Launcher");

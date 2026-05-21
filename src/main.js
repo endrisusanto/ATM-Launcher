@@ -54,8 +54,8 @@ app.innerHTML = `
       <div class="brand">
         <img class="brand-mark" src="${atmLogo}" alt="ATM" />
         <div>
-          <h1>ATM Batch Launcher</h1>
-          <p>Sequence runner for ATM test tools</p>
+          <h1>ATM Bersama</h1>
+          <p>Sequence runner for ATM test tools. Bukan buat narik duit ya!!!</p>
         </div>
       </div>
       <button class="icon-button" id="preflightBtn" title="Settings">⚙</button>
@@ -77,7 +77,7 @@ app.innerHTML = `
       <div class="toolbar">
         <button class="run-button" id="runBtn">Run Selected</button>
         <button class="ghost-button" id="cancelBtn" disabled>Cancel</button>
-        <button class="ghost-button lamp-button" id="lampBtn" title="Set selected device display timeout to 10 minutes and max brightness">Lamp</button>
+        <button class="ghost-button lamp-button" id="lampBtn" title="Set selected device display timeout to 10 minutes and max brightness">Max Brightness</button>
         <div class="toolbar-spacer"></div>
         <label class="retry">Concurrency: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
         <label class="check"><input id="allTools" type="checkbox" checked /> All</label>
@@ -175,6 +175,40 @@ els.unselectBtn.addEventListener("click", () => {
   }
   render();
 });
+document.addEventListener("DOMContentLoaded", () => {
+  els.testArea.innerHTML = "";
+  render();
+});
+
+let confettiInterval = null;
+const confettiContainer = document.createElement("div");
+confettiContainer.id = "confetti-container";
+document.body.appendChild(confettiContainer);
+
+function startDollarConfetti() {
+  if (confettiInterval) return;
+  const emojis = ["💲", "🪙", "💵"];
+  confettiInterval = setInterval(() => {
+    const el = document.createElement("div");
+    el.className = "confetti";
+    el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    el.style.left = Math.random() * 100 + "vw";
+    el.style.animationDuration = Math.random() * 2 + 3 + "s";
+    el.style.fontSize = Math.random() * 10 + 20 + "px";
+    
+    confettiContainer.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+  }, 150);
+}
+
+function stopDollarConfetti() {
+  if (confettiInterval) {
+    clearInterval(confettiInterval);
+    confettiInterval = null;
+  }
+  confettiContainer.innerHTML = "";
+}
+
 els.clearLogBtn.addEventListener("click", () => {
   state.logLines = [];
   renderLog();
@@ -207,7 +241,7 @@ els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
 els.lampBtn.addEventListener("click", setLampOnSelectedDevices);
-  // Removed ctsVerifier event listeners
+// Removed ctsVerifier event listeners
 els.browseBtn.addEventListener("click", async () => {
   try {
     const selected = await open({
@@ -246,6 +280,7 @@ function finishBatch(exitCode) {
   renderSummary();
   renderTests();
   updateRunButton();
+  if (exitCode === 0) startDollarConfetti();
 }
 
 listen("atm-run-finished", (event) => {
@@ -398,7 +433,7 @@ function renderTests() {
           <span>${selectedTestcases().length}/${testcases.length} checked</span>
         </header>
         <table>
-          <thead><tr><th>Select</th><th>Testcase</th><th>Result</th><th>Subtestcases</th><th>Time</th></tr></thead>
+          <thead><tr><th>Select</th><th>Testcase</th><th>Status</th><th>Sub Testcases</th><th>Time</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </article>
@@ -751,7 +786,16 @@ async function runBatch() {
   const devices = selectedDevices().map((d) => d.serial);
   const tools = selectedTestcases().map((testcase) => testcase.tool);
   if (!devices.length || !tools.length) return;
+  
+  stopDollarConfetti();
 
+  try {
+    await invoke("clear_results", { atmRoot: state.atmRoot || null });
+    appendLog(`[launcher] Test results folder cleared.`);
+  } catch (err) {
+    appendLog(`[launcher] Warning: Failed to clear results: ${err}`);
+  }
+  
   const javaTools = tools.filter(t => t !== "cts_verifier");
   const runCts = tools.includes("cts_verifier");
 
