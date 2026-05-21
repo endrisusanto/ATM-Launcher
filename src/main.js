@@ -212,6 +212,7 @@ function stopDollarConfetti() {
   confettiContainer.innerHTML = "";
 }
 
+document.addEventListener("click", stopDollarConfetti);
 els.clearLogBtn.addEventListener("click", () => {
   state.logLines = [];
   renderLog();
