@@ -589,6 +589,67 @@ fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result
     ))
 }
 
+#[tauri::command]
+fn install_cts_verifier(app: AppHandle, serial: String, atm_root: Option<String>) -> Result<(), String> {
+    cts_log(&app, &serial, "Resolving CTS Verifier APK resources...");
+    let resource_root = resolve_cts_resource_root(&app, atm_root.as_deref().map(Path::new))?;
+    let (apk_dir, version_label) = resolve_cts_apk_dir(&app, &serial, &resource_root)?;
+    cts_log(
+        &app,
+        &serial,
+        &format!("Using CTS Verifier resources: {version_label} ({})", apk_dir.display()),
+    );
+
+    cts_log(&app, &serial, "Installing CTS Verifier core APKs...");
+    install_apk(&serial, &apk_dir.join("CtsVerifier.apk"), &["-g", "-t"])?;
+    install_apk(&serial, &apk_dir.join("CtsEmptyDeviceOwner.apk"), &["-t"])?;
+    install_optional_apk(&serial, &apk_dir.join("CtsPermissionApp.apk"));
+
+    let automation_root = resource_root.join("ApkTest");
+    cts_log(&app, &serial, "Installing AutoCtsVerifier automation APKs...");
+    install_apk(&serial, &automation_root.join("AutoCtsVerifier-debug.apk"), &["-t", "-g"])?;
+    install_apk(&serial, &automation_root.join("AutoCtsVerifier-debug-androidTest.apk"), &["-t", "-g"])?;
+
+    cts_log(&app, &serial, "Installing companion APKs when available...");
+    for apk in [
+        "CtsEmptyDeviceAdmin.apk",
+        "CtsDeviceControlsApp.apk",
+        "CtsDefaultNotesApp.apk",
+        "CtsCarWatchdogCompanionApp.apk",
+        "CrossProfileTestApp.apk",
+        "CtsForceStopHelper.apk",
+        "CtsTileServiceApp.apk",
+        "NotificationBot.apk",
+        "CtsVerifierInstantApp.apk",
+        "CtsVerifierUSBCompanion.apk",
+        "CtsTtsEngineSelectorTestHelper.apk",
+        "CtsTtsEngineSelectorTestHelper2.apk",
+        "CtsVpnFirewallAppApi23.apk",
+        "CtsVpnFirewallAppApi24.apk",
+        "CtsVpnFirewallAppNotAlwaysOn.apk",
+        "jetpack-camera-app.apk",
+        "CameraFeatureCombinationVerifier.apk",
+    ] {
+        install_optional_apk(&serial, &apk_dir.join(apk));
+    }
+
+    cts_log(&app, &serial, "Applying CTS Verifier permissions/settings...");
+    grant_cts_permissions(&serial);
+    let _ = adb_device_output(&serial, &["shell", "dpm", "set-device-owner", "--user", "0", "com.android.cts.emptydeviceowner/.EmptyDeviceAdmin"]);
+    let _ = adb_device_output(&serial, &["shell", "appops", "set", "com.android.cts.verifier", "android:read_device_identifiers", "allow"]);
+    let _ = adb_device_output(&serial, &["shell", "appops", "set", "com.android.cts.verifier", "MANAGE_EXTERNAL_STORAGE", "allow"]);
+    let _ = adb_device_output(&serial, &["shell", "settings", "put", "global", "verifier_verify_adb_installs", "0"]);
+    let _ = adb_device_output(&serial, &["shell", "settings", "put", "global", "device_name", &serial]);
+
+    cts_log(&app, &serial, "CTS Verifier install sequence complete.");
+    Ok(())
+}
+
+#[tauri::command]
+fn start_cts_verifier_activity(serial: String, activity: String) -> Result<(), String> {
+    adb_device_output(&serial, &["shell", "am", "start", "-n", &activity]).map(|_| ())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -601,7 +662,9 @@ fn main() {
             cancel_batch,
             open_device_results,
             open_cts_verifier,
-            pull_cts_verifier_results
+            pull_cts_verifier_results,
+            install_cts_verifier,
+            start_cts_verifier_activity
         ])
         .run(tauri::generate_context!())
         .expect("error while running ATM Batch Launcher");
@@ -771,6 +834,13 @@ fn adb_props(adb: &str, serial: &str) -> Result<HashMap<String, String>, String>
     Ok(props)
 }
 
+fn adb_device_output(serial: &str, args: &[&str]) -> Result<String, String> {
+    let adb = adb_path();
+    let mut command = Command::new(&adb);
+    command.arg("-s").arg(serial).args(args);
+    run_output(&mut command)
+}
+
 fn run_output(command: &mut Command) -> Result<String, String> {
     #[cfg(windows)]
     command.creation_flags(0x08000000);
@@ -782,6 +852,119 @@ fn run_output(command: &mut Command) -> Result<String, String> {
         return Err(text);
     }
     Ok(text)
+}
+
+fn cts_log(app: &AppHandle, serial: &str, message: &str) {
+    let _ = app.emit("atm-run-log", format!("[cts-verifier][{serial}] {message}"));
+}
+
+fn candidate_cts_resource_roots(app: &AppHandle, atm_root: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(path) = env::var("CTS_VERIFIER_RESOURCE_DIR") {
+        if !path.trim().is_empty() {
+            roots.push(PathBuf::from(path));
+        }
+    }
+    if let Some(root) = atm_root {
+        roots.push(root.join("resources"));
+        roots.push(root.join("apks"));
+    }
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            roots.push(exe_dir.join("resources"));
+            roots.push(exe_dir.join("apks"));
+        }
+    }
+    if let Ok(cwd) = env::current_dir() {
+        roots.push(cwd.join("resources"));
+        roots.push(cwd.join("apks"));
+        roots.push(cwd.join("src-tauri").join("apks"));
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        roots.push(resource_dir.join("resources"));
+        roots.push(resource_dir.join("apks"));
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("apks"));
+    roots
+}
+
+fn resolve_cts_resource_root(app: &AppHandle, atm_root: Option<&Path>) -> Result<PathBuf, String> {
+    candidate_cts_resource_roots(app, atm_root)
+        .into_iter()
+        .find(|root| root.join("Normal").is_dir() && root.join("ApkTest").is_dir())
+        .ok_or_else(|| {
+            "CTS Verifier APK resource folder not found. Set CTS_VERIFIER_RESOURCE_DIR or place Normal/ and ApkTest/ under <ATM root>/resources.".to_string()
+        })
+}
+
+fn resolve_cts_apk_dir(app: &AppHandle, serial: &str, resource_root: &Path) -> Result<(PathBuf, String), String> {
+    let release = adb_device_output(serial, &["shell", "getprop", "ro.build.version.release"]).unwrap_or_default();
+    let oneui = adb_device_output(serial, &["shell", "getprop", "ro.build.version.oneui"]).unwrap_or_default();
+    let normalized = normalize_android_resource_version(release.trim(), oneui.trim());
+    let normal = resource_root.join("Normal");
+    let normalized_path = normal.join(&normalized);
+    if normalized_path.is_dir() {
+        return Ok((normalized_path, format!("Normal/{normalized}")));
+    }
+    let major = release.trim().split('.').next().unwrap_or("15");
+    let major_path = normal.join(major);
+    if major_path.is_dir() {
+        return Ok((major_path, format!("Normal/{major}")));
+    }
+    let _ = app;
+    Ok((normal, "Normal/default".to_string()))
+}
+
+fn normalize_android_resource_version(release: &str, oneui: &str) -> String {
+    let oneui_version = oneui.trim().parse::<u32>().unwrap_or(0);
+    let release = release.trim();
+    if release.starts_with("16") && oneui_version >= 80500 {
+        "16.1".to_string()
+    } else if release.starts_with("16") {
+        "16".to_string()
+    } else if release.starts_with("15") {
+        "15".to_string()
+    } else if release.starts_with("14") {
+        "14".to_string()
+    } else {
+        release.split('.').next().unwrap_or("15").to_string()
+    }
+}
+
+fn install_apk(serial: &str, apk_path: &Path, extra_flags: &[&str]) -> Result<(), String> {
+    if !apk_path.is_file() {
+        return Err(format!("Missing APK: {}", apk_path.display()));
+    }
+    let apk = apk_path.to_string_lossy();
+    let mut args = vec!["install", "-r", "-d"];
+    args.extend(extra_flags.iter().copied());
+    args.push(&apk);
+    adb_device_output(serial, &args).map(|_| ())
+}
+
+fn install_optional_apk(serial: &str, apk_path: &Path) {
+    if apk_path.is_file() {
+        let _ = install_apk(serial, apk_path, &["-g", "-t"]);
+    }
+}
+
+fn grant_cts_permissions(serial: &str) {
+    for permission in [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_CONTACTS",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.NEARBY_WIFI_DEVICES",
+    ] {
+        let _ = adb_device_output(serial, &["shell", "pm", "grant", "com.android.cts.verifier", permission]);
+    }
 }
 
 fn parse_getprop_line(line: &str) -> Option<(String, String)> {

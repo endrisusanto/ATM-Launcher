@@ -139,7 +139,9 @@ app.innerHTML = `
         <div class="cts-actions">
           <button class="ghost-button" id="ctsLoadBtn">Load Normal</button>
           <button class="ghost-button" id="ctsSelectAllBtn">Select All</button>
+          <button class="ghost-button" id="ctsInstallBtn">Install APKs</button>
           <button class="ghost-button" id="ctsOpenBtn">Open App</button>
+          <button class="ghost-button" id="ctsStartBtn">Start Selected</button>
           <button class="run-button" id="ctsPullBtn">Pull Reports</button>
         </div>
         <div class="cts-body" id="ctsBody"></div>
@@ -180,7 +182,9 @@ const els = {
   ctsCloseBtn: document.querySelector("#ctsCloseBtn"),
   ctsLoadBtn: document.querySelector("#ctsLoadBtn"),
   ctsSelectAllBtn: document.querySelector("#ctsSelectAllBtn"),
+  ctsInstallBtn: document.querySelector("#ctsInstallBtn"),
   ctsOpenBtn: document.querySelector("#ctsOpenBtn"),
+  ctsStartBtn: document.querySelector("#ctsStartBtn"),
   ctsPullBtn: document.querySelector("#ctsPullBtn"),
   ctsBody: document.querySelector("#ctsBody"),
 };
@@ -233,7 +237,9 @@ els.ctsModal.addEventListener("click", (event) => {
 });
 els.ctsLoadBtn.addEventListener("click", loadCtsNormalTests);
 els.ctsSelectAllBtn.addEventListener("click", toggleAllCtsTests);
+els.ctsInstallBtn.addEventListener("click", installCtsVerifierOnDevices);
 els.ctsOpenBtn.addEventListener("click", openCtsVerifierOnDevices);
+els.ctsStartBtn.addEventListener("click", startSelectedCtsVerifierTests);
 els.ctsPullBtn.addEventListener("click", pullCtsVerifierReports);
 els.browseBtn.addEventListener("click", async () => {
   try {
@@ -544,6 +550,47 @@ async function openCtsVerifierOnDevices() {
   }
 }
 
+async function installCtsVerifierOnDevices() {
+  const devices = selectedDevices();
+  if (!devices.length) return;
+  setCtsActionsDisabled(true);
+  try {
+    for (const device of devices) {
+      appendLog(`[cts-verifier] Installing APK set on ${device.serial}...`);
+      try {
+        await invoke("install_cts_verifier", { serial: device.serial, atmRoot: state.atmRoot || null });
+        appendLog(`[cts-verifier] Install complete on ${device.serial}`);
+      } catch (error) {
+        appendLog(`[cts-verifier] Install failed on ${device.serial}: ${error}`);
+      }
+    }
+  } finally {
+    setCtsActionsDisabled(false);
+  }
+}
+
+async function startSelectedCtsVerifierTests() {
+  const devices = selectedDevices();
+  const tests = state.ctsVerifier.tests.filter((test) => state.ctsVerifier.selected.has(test.testcase));
+  if (!devices.length || !tests.length) return;
+  setCtsActionsDisabled(true);
+  try {
+    for (const device of devices) {
+      for (const test of tests) {
+        appendLog(`[cts-verifier] Starting ${test.testcase} on ${device.serial}...`);
+        try {
+          await invoke("start_cts_verifier_activity", { serial: device.serial, activity: test.activity });
+          appendLog(`[cts-verifier] Started ${test.testcase} on ${device.serial}`);
+        } catch (error) {
+          appendLog(`[cts-verifier] Start failed ${test.testcase} on ${device.serial}: ${error}`);
+        }
+      }
+    }
+  } finally {
+    setCtsActionsDisabled(false);
+  }
+}
+
 async function pullCtsVerifierReports() {
   const devices = selectedDevices();
   if (!devices.length) return;
@@ -556,6 +603,13 @@ async function pullCtsVerifierReports() {
       appendLog(`[cts-verifier] Pull failed on ${device.serial}: ${error}`);
     }
   }
+}
+
+function setCtsActionsDisabled(disabled) {
+  [els.ctsLoadBtn, els.ctsSelectAllBtn, els.ctsInstallBtn, els.ctsOpenBtn, els.ctsStartBtn, els.ctsPullBtn]
+    .forEach((button) => {
+      button.disabled = disabled;
+    });
 }
 
 function renderLog() {
