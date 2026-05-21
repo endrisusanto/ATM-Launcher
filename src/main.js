@@ -16,8 +16,8 @@ const state = {
   atmRoot: localStorage.getItem("atmRoot") || "",
   wifi: {
     enabled: localStorage.getItem("atmWifiAutoConnect") === "true",
-    ssid: localStorage.getItem("atmWifiSsid") || "",
-    password: localStorage.getItem("atmWifiPassword") || "",
+    ssid: localStorage.getItem("atmWifiSsid") || "RTT / IEEE 802.11",
+    password: localStorage.getItem("atmWifiPassword") || "1234qwer",
   },
   logLines: [],
   results: new Map(),

@@ -284,6 +284,7 @@ fn connect_wifi_with_util(
         ],
     )?;
     thread::sleep(Duration::from_secs(2));
+    let _ = adb_device_output(serial, &["shell", "pm", "uninstall", WIFI_UTIL_PACKAGE]);
     Ok(format!(
         "WifiUtil connected \"{}\"{}",
         ssid,
