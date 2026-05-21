@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "ATM Bersama by endri.s@samsung.com",
-        "width": 1520,
-        "height": 1080,
+        "width": 1920,
+        "height": 720,
         "minWidth": 1180,
         "minHeight": 720,
         "resizable": true,
