@@ -33,7 +33,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/atm-batch-launcher/*": "atm-batch-launcher/"
+      "resources/atm-batch-launcher/*": "atm-batch-launcher/",
+      "resources/assets/*": "assets/"
     }
   }
 }

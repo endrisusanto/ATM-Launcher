@@ -16,6 +16,8 @@ use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+const WIFI_UTIL_PACKAGE: &str = "com.android.tradefed.utils.wifi";
+
 #[derive(Debug, Clone, Serialize)]
 struct DeviceInfo {
     serial: String,
@@ -175,34 +177,120 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 #[tauri::command]
-fn connect_wifi(serial: String, ssid: String, password: Option<String>) -> Result<String, String> {
+fn connect_wifi(
+    app: AppHandle,
+    serial: String,
+    ssid: String,
+    password: Option<String>,
+) -> Result<String, String> {
     let trimmed_ssid = ssid.trim();
     if trimmed_ssid.is_empty() {
         return Err("SSID is empty".to_string());
     }
 
-    let _ = adb_device_output(&serial, &["shell", "svc", "wifi", "enable"]);
-    thread::sleep(Duration::from_millis(700));
+    connect_wifi_with_util(&app, &serial, trimmed_ssid, password.as_deref())
+        .map(|message| redact_wifi_output(&message, password.as_deref()))
+        .or_else(|util_error| {
+            let fallback = connect_wifi_with_cmd(&serial, trimmed_ssid, password.as_deref())
+                .map(|message| redact_wifi_output(&message, password.as_deref()));
+            fallback.map_err(|cmd_error| {
+                format!(
+                    "WifiUtil failed: {}. cmd wifi fallback failed: {}",
+                    redact_wifi_output(&util_error, password.as_deref()),
+                    redact_wifi_output(&cmd_error, password.as_deref())
+                )
+            })
+        })
+}
 
-    let mut args = vec!["shell", "cmd", "wifi", "connect-network", trimmed_ssid];
-    if let Some(password) = password.as_deref().filter(|value| !value.is_empty()) {
+fn connect_wifi_with_cmd(
+    serial: &str,
+    ssid: &str,
+    password: Option<&str>,
+) -> Result<String, String> {
+    let _ = adb_device_output(serial, &["shell", "svc", "wifi", "enable"]);
+    thread::sleep(Duration::from_millis(700));
+    let mut args = vec!["shell", "cmd", "wifi", "connect-network", ssid];
+    if let Some(password) = password.filter(|value| !value.is_empty()) {
         args.push("wpa2");
         args.push(password);
     } else {
         args.push("open");
     }
 
-    let output = adb_device_output(&serial, &args)?;
+    let output = adb_device_output(serial, &args)?;
     let lower = output.to_lowercase();
     if lower.contains("failed") || lower.contains("error") || lower.contains("unknown") {
-        return Err(redact_wifi_output(&output, password.as_deref()));
+        return Err(output);
     }
-    let cleaned = redact_wifi_output(&output, password.as_deref());
-    Ok(if cleaned.trim().is_empty() {
-        format!("connect requested for \"{trimmed_ssid}\"")
+    Ok(if output.trim().is_empty() {
+        format!("cmd wifi connect requested for \"{ssid}\"")
     } else {
-        cleaned.trim().to_string()
+        output.trim().to_string()
     })
+}
+
+fn connect_wifi_with_util(
+    app: &AppHandle,
+    serial: &str,
+    ssid: &str,
+    password: Option<&str>,
+) -> Result<String, String> {
+    let apk = wifi_util_apk_path(app)?;
+    let _ = adb_device_output(serial, &["shell", "svc", "wifi", "enable"]);
+    thread::sleep(Duration::from_millis(700));
+    let _ = adb_device_output(serial, &["shell", "pm", "uninstall", WIFI_UTIL_PACKAGE]);
+
+    install_wifi_util(serial, &apk)?;
+    thread::sleep(Duration::from_secs(2));
+
+    let add_command = if let Some(password) = password.filter(|value| !value.is_empty()) {
+        format!(
+            "am instrument -e method addWpaPskNetwork -e ssid {} -e psk {} -e hidden true -w {}/.WifiUtil",
+            wifi_shell_value(ssid),
+            wifi_shell_value(password),
+            WIFI_UTIL_PACKAGE
+        )
+    } else {
+        format!(
+            "am instrument -e method addOpenNetwork -e ssid {} -e hidden true -w {}/.WifiUtil",
+            wifi_shell_value(ssid),
+            WIFI_UTIL_PACKAGE
+        )
+    };
+    let add_result = adb_device_output(serial, &["shell", &add_command])?;
+    let network_id = parse_wifi_network_id(&add_result);
+    let associate_command = if let Some(id) = network_id.as_deref() {
+        format!(
+            "am instrument -e method associateNetwork -e id {} -w {}/.WifiUtil",
+            id, WIFI_UTIL_PACKAGE
+        )
+    } else {
+        format!(
+            "am instrument -e method associateNetwork -e ssid {} -w {}/.WifiUtil",
+            wifi_shell_value(ssid),
+            WIFI_UTIL_PACKAGE
+        )
+    };
+    adb_device_output(serial, &["shell", &associate_command])?;
+    adb_device_output(
+        serial,
+        &[
+            "shell",
+            &format!(
+                "am instrument -e method saveConfiguration -w {}/.WifiUtil",
+                WIFI_UTIL_PACKAGE
+            ),
+        ],
+    )?;
+    thread::sleep(Duration::from_secs(2));
+    Ok(format!(
+        "WifiUtil connected \"{}\"{}",
+        ssid,
+        network_id
+            .map(|id| format!(" network_id={id}"))
+            .unwrap_or_default()
+    ))
 }
 
 #[tauri::command]
@@ -1260,6 +1348,66 @@ fn adb_device_output(serial: &str, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new(&adb);
     command.arg("-s").arg(serial).args(args);
     run_output(&mut command)
+}
+
+fn install_wifi_util(serial: &str, apk: &Path) -> Result<String, String> {
+    let apk = apk.to_string_lossy();
+    match adb_device_output(
+        serial,
+        &["install", "-r", "-g", "--bypass-low-target-sdk-block", &apk],
+    ) {
+        Ok(output) => Ok(output),
+        Err(first_error) => adb_device_output(serial, &["install", "-r", "-g", &apk])
+            .map_err(|second_error| format!("{first_error}\n{second_error}")),
+    }
+}
+
+fn wifi_util_apk_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("WifiUtil.apk"));
+        candidates.push(resource_dir.join("assets").join("WifiUtil.apk"));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("assets")
+            .join("WifiUtil.apk"),
+    );
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join("assets").join("WifiUtil.apk"));
+            candidates.push(exe_dir.join("_up_").join("assets").join("WifiUtil.apk"));
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| "WifiUtil.apk resource not found".to_string())
+}
+
+fn parse_wifi_network_id(output: &str) -> Option<String> {
+    let value = output.split("result=").nth(1).map(|tail| {
+        tail.chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>()
+    })?;
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn wifi_shell_value(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$")
+            .replace('`', "\\`")
+    )
 }
 
 fn run_output(command: &mut Command) -> Result<String, String> {
