@@ -363,7 +363,10 @@ public class AtmBatchLauncher {
                 log("[" + device.serial + "] END " + tool.displayName + " exit=" + outcome.exitCode
                         + " duration=" + outcome.durationSeconds + "s result=" + summary.status + " " + summary.detail);
                 if (tool == ToolProfile.BVT) {
+                    bvtSummaryFromSummary(summary).ifPresent(bvtSummary ->
+                            log("[" + device.serial + "] BVT_SUMMARY\t" + bvtSummary.total + "\t" + bvtSummary.pass + "\t" + bvtSummary.failed));
                     for (BvtSubtest subtest : bvtSubtestsFromSummary(summary)) {
+                        if (!subtest.isFailed()) continue;
                         log("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name);
                     }
                 }
@@ -814,7 +817,10 @@ public class AtmBatchLauncher {
                 System.out.println("[" + device.serial + "] END " + tool.displayName + " exit=" + outcome.exitCode
                         + " duration=" + outcome.durationSeconds + "s result=" + summary.status + " " + summary.detail);
                 if (tool == ToolProfile.BVT) {
+                    bvtSummaryFromSummary(summary).ifPresent(bvtSummary ->
+                            System.out.println("[" + device.serial + "] BVT_SUMMARY\t" + bvtSummary.total + "\t" + bvtSummary.pass + "\t" + bvtSummary.failed));
                     for (BvtSubtest subtest : bvtSubtestsFromSummary(summary)) {
+                        if (!subtest.isFailed()) continue;
                         System.out.println("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name);
                     }
                 }
@@ -1300,6 +1306,29 @@ public class AtmBatchLauncher {
         }
     }
 
+    private static Optional<BvtSummary> bvtSummaryFromSummary(ResultSummary summary) {
+        if (summary == null || summary.detail == null) return Optional.empty();
+        int pass = tokenInt(summary.detail, "pass", -1);
+        int failed = tokenInt(summary.detail, "failed", -1);
+        int total = tokenInt(summary.detail, "total", -1);
+        Matcher matcher = Pattern.compile("\\bfile=(.+)$").matcher(summary.detail);
+        if (matcher.find()) {
+            Path xml = Paths.get(matcher.group(1).trim());
+            if (Files.isRegularFile(xml)) {
+                try {
+                    String text = Files.readString(xml, StandardCharsets.UTF_8);
+                    pass = intAttr(text, "pass", pass);
+                    failed = intAttr(text, "failed", failed);
+                    total = pass >= 0 && failed >= 0 ? pass + failed : total;
+                } catch (IOException ignored) {
+                }
+            }
+        }
+        if (total < 0 && pass >= 0 && failed >= 0) total = pass + failed;
+        if (pass < 0 && failed < 0 && total < 0) return Optional.empty();
+        return Optional.of(new BvtSummary(Math.max(total, 0), Math.max(pass, 0), Math.max(failed, 0)));
+    }
+
     private static List<BvtSubtest> parseBvtSubtests(Path xml) throws IOException {
         String text = Files.readString(xml, StandardCharsets.UTF_8);
         List<BvtSubtest> subtests = new ArrayList<>();
@@ -1364,6 +1393,11 @@ public class AtmBatchLauncher {
                 .replace('\n', ' ')
                 .replace('\r', ' ')
                 .trim();
+    }
+
+    private static int tokenInt(String text, String key, int fallback) {
+        Matcher matcher = Pattern.compile("\\b" + Pattern.quote(key) + "=(\\d+)").matcher(text);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : fallback;
     }
 
     private static final class DeviceInfo {
@@ -1469,5 +1503,10 @@ public class AtmBatchLauncher {
     private record CommandResult(int exitCode, String output) {}
     private record ProcessOutcome(int exitCode, boolean timedOut, long durationSeconds) {}
     private record ResultSummary(String status, String detail) {}
-    private record BvtSubtest(String name, String status) {}
+    private record BvtSubtest(String name, String status) {
+        boolean isFailed() {
+            return "FAIL".equalsIgnoreCase(status) || "TIMEOUT".equalsIgnoreCase(status);
+        }
+    }
+    private record BvtSummary(int total, int pass, int failed) {}
 }

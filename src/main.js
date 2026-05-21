@@ -571,17 +571,26 @@ function progressForStatus(status) {
 }
 
 function renderBvtSubtests(subtests = []) {
-  if (!subtests.length) return `<span class="subtest-empty">Waiting for BVT details</span>`;
-  const failedCount = subtests.filter((item) => item.status === "Failed" || item.status === "Timeout").length;
-  const shown = subtests.slice(0, 12).map((item) => `
+  const failed = subtests.filter((item) => item.status === "Failed" || item.status === "Timeout");
+  const summary = renderBvtSummary(subtests.summary);
+  if (!failed.length) return `${summary}<span class="subtest-empty">No failed BVT subtest</span>`;
+  const shown = failed.slice(0, 12).map((item) => `
     <div class="subtest-row">
       <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
       <strong class="${statusClass(item.status)}">${escapeHtml(item.status)}</strong>
     </div>
   `).join("");
-  const more = subtests.length > 12 ? `<div class="subtest-more">+${subtests.length - 12} more</div>` : "";
-  const summary = failedCount > 0 ? `<div class="subtest-summary">${failedCount} failed</div>` : "";
+  const more = failed.length > 12 ? `<div class="subtest-more">+${failed.length - 12} more failed</div>` : "";
   return `<div class="subtest-list">${summary}${shown}${more}</div>`;
+}
+
+function renderBvtSummary(summary) {
+  if (!summary) return `<div class="subtest-summary">Total: - · Passed: - · Failed: -</div>`;
+  return `
+    <div class="subtest-summary">
+      Total: ${escapeHtml(summary.total)} · Passed: ${escapeHtml(summary.pass)} · Failed: ${escapeHtml(summary.failed)}
+    </div>
+  `;
 }
 
 function markRunningAs(status) {
@@ -613,10 +622,27 @@ function collectResultFromLine(line) {
     const serial = subtest[1];
     const key = `${serial}:bvt`;
     const previous = state.results.get(key) || { status: "Executing", time: "00:00:00", subtests: [] };
-    const nextSubtests = [...(previous.subtests || []), {
+    const currentSubtests = previous.subtests || [];
+    const nextSubtests = [...currentSubtests, {
       status: normalizeSubtestStatus(subtest[2]),
       name: subtest[3],
     }];
+    nextSubtests.summary = currentSubtests.summary;
+    state.results.set(key, { ...previous, subtests: nextSubtests });
+    renderTests();
+    return;
+  }
+  const bvtSummary = line.match(/^\[([^\]]+)] BVT_SUMMARY\t(\d+)\t(\d+)\t(\d+)$/);
+  if (bvtSummary) {
+    const serial = bvtSummary[1];
+    const key = `${serial}:bvt`;
+    const previous = state.results.get(key) || { status: "Executing", time: "00:00:00", subtests: [] };
+    const nextSubtests = [...(previous.subtests || [])];
+    nextSubtests.summary = {
+      total: Number(bvtSummary[2]),
+      pass: Number(bvtSummary[3]),
+      failed: Number(bvtSummary[4]),
+    };
     state.results.set(key, { ...previous, subtests: nextSubtests });
     renderTests();
     return;
@@ -629,7 +655,11 @@ function collectResultFromLine(line) {
   const status = normalizeEndStatus(tool, rawStatus, line);
   const previous = state.results.get(`${serial}:${tool}`);
   const elapsed = previous?.startedAt ? Date.now() - previous.startedAt : Date.now() - state.runStartedAt;
-  state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed), subtests: previous?.subtests || [] });
+  const subtests = previous?.subtests || [];
+  if (tool === "bvt" && !subtests.summary) {
+    subtests.summary = parseBvtSummaryFromEndLine(line);
+  }
+  state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed), subtests });
   markNextToolRunning(serial, tool);
   renderSummary();
   render();
@@ -672,6 +702,12 @@ function normalizeSubtestStatus(status) {
   if (status === "FAIL") return "Failed";
   if (status === "TIMEOUT") return "Timeout";
   return "Not Executed";
+}
+
+function parseBvtSummaryFromEndLine(line) {
+  const pass = Number(line.match(/\bpass=(\d+)/)?.[1] || 0);
+  const failed = Number(line.match(/\bfailed=(\d+)/)?.[1] || 0);
+  return { total: pass + failed, pass, failed };
 }
 
 function statusClass(status) {
