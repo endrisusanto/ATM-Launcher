@@ -65,7 +65,7 @@ ATM Launcher menyediakan workbench CTS Verifier ringan dengan UX yang sama:
 - install CTS Verifier core APK, AutoCtsVerifier APK, dan companion APK opsional dari resource eksternal,
 - start selected CTS Verifier activity pada selected device,
 - run selected testcase lewat AutoCtsVerifier instrumentation dan tampilkan status/time per testcase,
-- pull report CTS Verifier ke `<ATM root>/results/<serial>/CTSVerifier`.
+- pull report CTS Verifier ke `<ATM root>/results/<model>/<build>/CTSVerifier`, selaras dengan struktur result ATM lain.
 
 Resource APK CTS Verifier belum dibundel ke ATM Launcher karena ukuran file besar. App akan mencari folder APK dari:
 

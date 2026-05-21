@@ -543,10 +543,7 @@ fn open_cts_verifier(serial: String) -> Result<(), String> {
 #[tauri::command]
 fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result<String, String> {
     let root = resolve_atm_root(atm_root)?;
-    let target = root
-        .join("results")
-        .join(safe_path_segment(&serial))
-        .join("CTSVerifier");
+    let target = cts_verifier_result_dir(&root, &serial);
     std::fs::create_dir_all(&target)
         .map_err(|err| format!("Cannot create {}: {err}", target.display()))?;
 
@@ -786,6 +783,12 @@ fn find_device_results_dir(results: &Path, serial: &str) -> Option<PathBuf> {
     let direct = results.join(serial);
     if direct.is_dir() {
         return Some(direct);
+    }
+    if let Some(atm_root) = results.parent() {
+        let cts = cts_verifier_result_dir(atm_root, serial);
+        if cts.is_dir() {
+            return Some(cts);
+        }
     }
     let needle = serial.to_lowercase();
     let mut stack = vec![results.to_path_buf()];
@@ -1211,6 +1214,25 @@ fn safe_path_segment(value: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') { ch } else { '_' })
         .collect()
+}
+
+fn cts_verifier_result_dir(root: &Path, serial: &str) -> PathBuf {
+    let model = adb_device_output(serial, &["shell", "getprop", "ro.product.model"])
+        .unwrap_or_else(|_| serial.to_string());
+    let build = adb_device_output(serial, &["shell", "getprop", "ro.build.version.incremental"])
+        .unwrap_or_else(|_| "unknown-build".to_string());
+    root.join("results")
+        .join(safe_path_segment(first_non_blank(&[model.trim(), serial])))
+        .join(safe_path_segment(first_non_blank(&[build.trim(), "unknown-build"])))
+        .join("CTSVerifier")
+}
+
+fn first_non_blank<'a>(values: &'a [&str]) -> &'a str {
+    values
+        .iter()
+        .copied()
+        .find(|value| !value.trim().is_empty())
+        .unwrap_or("")
 }
 
 fn target_has_files(path: &Path) -> bool {
