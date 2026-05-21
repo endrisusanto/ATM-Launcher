@@ -14,6 +14,11 @@ const state = {
   running: false,
   loadedDevices: false,
   atmRoot: localStorage.getItem("atmRoot") || "",
+  wifi: {
+    enabled: localStorage.getItem("atmWifiAutoConnect") === "true",
+    ssid: localStorage.getItem("atmWifiSsid") || "",
+    password: localStorage.getItem("atmWifiPassword") || "",
+  },
   logLines: [],
   results: new Map(),
   summary: {
@@ -126,6 +131,17 @@ app.innerHTML = `
             <button id="browseBtn" class="ghost-button" style="padding: 0 12px; height: 34px;">Browse</button>
           </div>
         </label>
+        <section class="settings-section">
+          <label class="check"><input id="wifiAutoConnectInput" type="checkbox" /> Auto connect Wi-Fi before test</label>
+          <label class="path-field compact">
+            <span>Preset SSID</span>
+            <input id="wifiSsidInput" type="text" placeholder="Wi-Fi SSID" autocomplete="off" />
+          </label>
+          <label class="path-field compact">
+            <span>Password</span>
+            <input id="wifiPasswordInput" type="password" placeholder="Wi-Fi password" autocomplete="off" />
+          </label>
+        </section>
         <div class="settings-actions">
           <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
           <button class="ghost-button" id="settingsCheckBtn">Check</button>
@@ -154,6 +170,9 @@ const els = {
   settingsCheckBtn: document.querySelector("#settingsCheckBtn"),
   settingsSaveBtn: document.querySelector("#settingsSaveBtn"),
   atmRootInput: document.querySelector("#atmRootInput"),
+  wifiAutoConnectInput: document.querySelector("#wifiAutoConnectInput"),
+  wifiSsidInput: document.querySelector("#wifiSsidInput"),
+  wifiPasswordInput: document.querySelector("#wifiPasswordInput"),
   settingsOutput: document.querySelector("#settingsOutput"),
   clearLogBtn: document.querySelector("#clearLogBtn"),
   allTools: document.querySelector("#allTools"),
@@ -325,10 +344,11 @@ function renderDevices() {
     els.deviceList.innerHTML = `<div class="empty">No devices detected</div>`;
     return;
   }
-  els.deviceList.innerHTML = state.devices.map((device) => {
-    const selected = state.selected.has(device.serial);
-    const ready = device.state === "device";
-    const progress = deviceProgress(device.serial);
+	els.deviceList.innerHTML = state.devices.map((device) => {
+	  const selected = state.selected.has(device.serial);
+	  const ready = device.state === "device";
+	  const lampActive = state.lampStates.get(device.serial);
+	  const progress = deviceProgress(device.serial);
     const flow = selected ? `
       <div class="device-flow ${statusClass(progress.status)}">
         <div class="device-flow-top">
@@ -346,10 +366,10 @@ function renderDevices() {
           <span class="check-dot ${selected ? "checked" : ""}">${selected ? "✓" : ""}</span>
           <div>
             <strong>${escapeHtml(device.model || "Unknown")}</strong>
-            <p><b>${escapeHtml(device.serial)}</b> · Android ${escapeHtml(device.android || "-")} · <span>${escapeHtml(device.state)}</span></p>
-          </div>
-          <div style="display:flex; gap:6px;">
-            <button class="result-pill lamp-button" data-lamp="${device.serial}" ${ready ? "" : "disabled"} title="Toggle Brightness">💡</button>
+	            <p><b>${escapeHtml(device.serial)}</b> · Android ${escapeHtml(device.android || "-")} · <span>${escapeHtml(deviceStateLabel(device.state))}</span></p>
+	          </div>
+	          <div style="display:flex; gap:6px;">
+	            <button class="result-pill lamp-button ${lampActive ? "active" : ""}" data-lamp="${device.serial}" ${ready ? "" : "disabled"} title="Toggle Brightness">💡</button>
             <button class="result-pill" data-serial="${device.serial}" ${ready ? "" : "disabled"}>RESULT</button>
           </div>
         </div>
@@ -740,6 +760,9 @@ async function runPreflight() {
 
 function openSettings() {
   els.atmRootInput.value = state.atmRoot;
+  els.wifiAutoConnectInput.checked = state.wifi.enabled;
+  els.wifiSsidInput.value = state.wifi.ssid;
+  els.wifiPasswordInput.value = state.wifi.password;
   els.settingsOutput.textContent = state.atmRoot ? `Current ATM path:\n${state.atmRoot}` : "ATM path is empty. Use Auto Detect or paste the ATM root path.";
   els.settingsModal.classList.remove("hidden");
   els.atmRootInput.focus();
@@ -751,9 +774,18 @@ function closeSettings() {
 
 function saveSettings(writeLog = true) {
   state.atmRoot = els.atmRootInput.value.trim();
+  state.wifi.enabled = els.wifiAutoConnectInput.checked;
+  state.wifi.ssid = els.wifiSsidInput.value.trim();
+  state.wifi.password = els.wifiPasswordInput.value;
   if (state.atmRoot) localStorage.setItem("atmRoot", state.atmRoot);
   else localStorage.removeItem("atmRoot");
-  if (writeLog) appendLog(`[launcher] ATM path saved: ${state.atmRoot || "(auto)"}`);
+  if (state.wifi.enabled) localStorage.setItem("atmWifiAutoConnect", "true");
+  else localStorage.removeItem("atmWifiAutoConnect");
+  if (state.wifi.ssid) localStorage.setItem("atmWifiSsid", state.wifi.ssid);
+  else localStorage.removeItem("atmWifiSsid");
+  if (state.wifi.password) localStorage.setItem("atmWifiPassword", state.wifi.password);
+  else localStorage.removeItem("atmWifiPassword");
+  if (writeLog) appendLog(`[launcher] Settings saved. ATM path: ${state.atmRoot || "(auto)"}, Wi-Fi: ${state.wifi.enabled && state.wifi.ssid ? state.wifi.ssid : "off"}`);
 }
 
 async function autoDetectAtmRoot() {
@@ -773,10 +805,11 @@ async function autoDetectAtmRoot() {
 async function toggleLamp(serial) {
   if (!serial) return;
   const brighten = !state.lampStates.get(serial);
-  state.lampStates.set(serial, brighten);
   appendLog(`[launcher] Toggling lamp for ${serial}: ${brighten ? "max" : "min"} brightness`);
   try {
     await invoke("set_device_lamp", { serial, brighten });
+    state.lampStates.set(serial, brighten);
+    renderDevices();
   } catch (error) {
     appendLog(`[launcher] Failed to toggle lamp for ${serial}: ${error}`);
   }
@@ -789,9 +822,27 @@ async function runBatch() {
 
   stopDollarConfetti();
 
+  if (state.wifi.enabled && state.wifi.ssid) {
+    appendLog(`[launcher] Auto connecting Wi-Fi "${state.wifi.ssid}" on selected devices...`);
+    for (const serial of devices) {
+      try {
+        const output = await invoke("connect_wifi", {
+          serial,
+          ssid: state.wifi.ssid,
+          password: state.wifi.password || null,
+        });
+        appendLog(`[${serial}] WIFI ${output}`);
+      } catch (err) {
+        appendLog(`[${serial}] WIFI warning: ${err}`);
+      }
+    }
+  } else if (state.wifi.enabled) {
+    appendLog("[launcher] Wi-Fi auto connect is enabled but SSID is empty; skipping.");
+  }
+
   try {
-    await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices });
-    appendLog(`[launcher] Test results folder cleared for devices: ${devices.join(", ")}.`);
+    await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices, tools });
+    appendLog(`[launcher] Selected test result folders cleared for devices: ${devices.join(", ")} tools=${tools.join(", ")}.`);
   } catch (err) {
     appendLog(`[launcher] Warning: Failed to clear results: ${err}`);
   }
@@ -910,6 +961,10 @@ async function openDeviceResults(serial) {
 
 function selectedDevices() {
   return state.devices.filter((device) => state.selected.has(device.serial));
+}
+
+function deviceStateLabel(state) {
+  return state === "device" ? "tersambung" : state;
 }
 
 function selectedTestcases() {

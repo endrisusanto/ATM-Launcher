@@ -250,11 +250,26 @@ h2 {
   font-size: 12px;
 }
 
+.path-field.compact {
+  padding: 10px 0 0;
+}
+
 .settings-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding: 0 16px 16px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 2px;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.settings-section > .check {
+  min-height: 40px;
 }
 
 .settings-output {
@@ -328,6 +343,16 @@ h2 {
   color: var(--yellow);
   border-color: #5c5014;
   background: #171508;
+}
+
+.lamp-button.active {
+  color: #fff6a3;
+  border-color: #f2d84b;
+  background: radial-gradient(circle at 50% 45%, rgba(242, 216, 75, 0.32), #2a2508 72%);
+  box-shadow:
+    0 0 0 1px rgba(242, 216, 75, 0.28),
+    0 0 16px rgba(242, 216, 75, 0.72),
+    inset 0 0 10px rgba(242, 216, 75, 0.28);
 }
 
 .ghost-button:disabled,

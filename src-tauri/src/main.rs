@@ -175,6 +175,37 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 
 #[tauri::command]
+fn connect_wifi(serial: String, ssid: String, password: Option<String>) -> Result<String, String> {
+    let trimmed_ssid = ssid.trim();
+    if trimmed_ssid.is_empty() {
+        return Err("SSID is empty".to_string());
+    }
+
+    let _ = adb_device_output(&serial, &["shell", "svc", "wifi", "enable"]);
+    thread::sleep(Duration::from_millis(700));
+
+    let mut args = vec!["shell", "cmd", "wifi", "connect-network", trimmed_ssid];
+    if let Some(password) = password.as_deref().filter(|value| !value.is_empty()) {
+        args.push("wpa2");
+        args.push(password);
+    } else {
+        args.push("open");
+    }
+
+    let output = adb_device_output(&serial, &args)?;
+    let lower = output.to_lowercase();
+    if lower.contains("failed") || lower.contains("error") || lower.contains("unknown") {
+        return Err(redact_wifi_output(&output, password.as_deref()));
+    }
+    let cleaned = redact_wifi_output(&output, password.as_deref());
+    Ok(if cleaned.trim().is_empty() {
+        format!("connect requested for \"{trimmed_ssid}\"")
+    } else {
+        cleaned.trim().to_string()
+    })
+}
+
+#[tauri::command]
 fn run_batch(
     app: AppHandle,
     run_state: State<'_, RunState>,
@@ -947,23 +978,44 @@ fn run_cts_verifier_test_blocking(
 }
 
 #[tauri::command]
-fn clear_results(atm_root: Option<String>, serials: Vec<String>) -> Result<(), String> {
+fn clear_results(
+    atm_root: Option<String>,
+    serials: Vec<String>,
+    tools: Vec<String>,
+) -> Result<(), String> {
     let root = resolve_atm_root(atm_root)?;
-    
+    let result_folders: Vec<&'static str> = tools
+        .iter()
+        .filter_map(|tool| result_folder_for_tool(tool))
+        .collect();
+    if result_folders.is_empty() {
+        return Ok(());
+    }
+
     for serial in serials {
         let model = adb_device_output(&serial, &["shell", "getprop", "ro.product.model"])
             .unwrap_or_else(|_| serial.clone());
-        let build = adb_device_output(&serial, &["shell", "getprop", "ro.build.version.incremental"])
-            .unwrap_or_else(|_| "unknown-build".to_string());
-            
-        let target_dir = root.join("results")
+        let build = adb_device_output(
+            &serial,
+            &["shell", "getprop", "ro.build.version.incremental"],
+        )
+        .unwrap_or_else(|_| "unknown-build".to_string());
+
+        let build_dir = root
+            .join("results")
             .join(safe_path_segment(first_non_blank(&[model.trim(), &serial])))
-            .join(safe_path_segment(first_non_blank(&[build.trim(), "unknown-build"])));
-            
-        if target_dir.exists() {
-            let _ = std::fs::remove_dir_all(&target_dir);
+            .join(safe_path_segment(first_non_blank(&[
+                build.trim(),
+                "unknown-build",
+            ])));
+
+        for folder in &result_folders {
+            let target_dir = build_dir.join(folder);
+            if target_dir.exists() {
+                let _ = std::fs::remove_dir_all(&target_dir);
+            }
         }
-        let _ = std::fs::create_dir_all(&target_dir);
+        let _ = std::fs::create_dir_all(&build_dir);
     }
     Ok(())
 }
@@ -976,6 +1028,7 @@ fn main() {
             default_atm_root,
             preflight,
             list_devices,
+            connect_wifi,
             run_batch,
             cancel_batch,
             open_device_results,
@@ -1350,17 +1403,76 @@ fn set_device_lamp_blocking(serial: &str, brighten: bool) -> Result<(), String> 
     if brighten {
         let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
         let _ = adb_device_output(serial, &["shell", "input", "keyevent", "KEYCODE_HOME"]);
-        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness_mode", "0"])?;
-        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness", "255"])?;
-        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_off_timeout", "600000"])?;
+        adb_device_output(
+            serial,
+            &[
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_brightness_mode",
+                "0",
+            ],
+        )?;
+        adb_device_output(
+            serial,
+            &[
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_brightness",
+                "255",
+            ],
+        )?;
+        adb_device_output(
+            serial,
+            &[
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_off_timeout",
+                "600000",
+            ],
+        )?;
     } else {
-        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness_mode", "0"])?;
-        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_brightness", "10"])?;
-        adb_device_output(serial, &["shell", "settings", "put", "system", "screen_off_timeout", "60000"])?;
+        adb_device_output(
+            serial,
+            &[
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_brightness_mode",
+                "0",
+            ],
+        )?;
+        adb_device_output(
+            serial,
+            &[
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_brightness",
+                "10",
+            ],
+        )?;
+        adb_device_output(
+            serial,
+            &[
+                "shell",
+                "settings",
+                "put",
+                "system",
+                "screen_off_timeout",
+                "60000",
+            ],
+        )?;
     }
     Ok(())
 }
-
 
 fn grant_cts_permissions(serial: &str) {
     for permission in [
@@ -1696,6 +1808,27 @@ fn safe_path_segment(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn result_folder_for_tool(tool: &str) -> Option<&'static str> {
+    match tool.trim().to_lowercase().as_str() {
+        "getprop" => Some("Getprop"),
+        "bvt" => Some("BVT"),
+        "svt" => Some("SVT"),
+        "sdt" => Some("SDT"),
+        "cts_verifier" => Some("CTSVerifier"),
+        "fmdut" => Some("FMDUT"),
+        "cschecker" | "csc_checker" => Some("CSCChecker"),
+        "atmoctopus" | "atm_octopus" => Some("AtmOctopus"),
+        _ => None,
+    }
+}
+
+fn redact_wifi_output(output: &str, password: Option<&str>) -> String {
+    let Some(password) = password.filter(|value| !value.is_empty()) else {
+        return output.to_string();
+    };
+    output.replace(password, "********")
 }
 
 fn cts_verifier_result_dir(root: &Path, serial: &str) -> PathBuf {
