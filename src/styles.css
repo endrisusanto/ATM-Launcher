@@ -324,6 +324,12 @@ h2 {
   background: #09130e;
 }
 
+.lamp-button {
+  color: var(--yellow);
+  border-color: #5c5014;
+  background: #171508;
+}
+
 .ghost-button:disabled,
 .run-button:disabled {
   opacity: 0.45;

@@ -76,6 +76,7 @@ app.innerHTML = `
       <div class="toolbar">
         <button class="run-button" id="runBtn">Run Selected</button>
         <button class="ghost-button" id="cancelBtn" disabled>Cancel</button>
+        <button class="ghost-button lamp-button" id="lampBtn" title="Set selected device display timeout to 10 minutes and max brightness">Lamp</button>
         <div class="toolbar-spacer"></div>
         <label class="retry">Concurrency: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
         <label class="check"><input id="allTools" type="checkbox" checked /> All</label>
@@ -139,6 +140,7 @@ const els = {
   logBox: document.querySelector("#logBox"),
   runBtn: document.querySelector("#runBtn"),
   cancelBtn: document.querySelector("#cancelBtn"),
+  lampBtn: document.querySelector("#lampBtn"),
   refreshBtn: document.querySelector("#refreshBtn"),
   unselectBtn: document.querySelector("#unselectBtn"),
   preflightBtn: document.querySelector("#preflightBtn"),
@@ -203,6 +205,7 @@ els.settingsCheckBtn.addEventListener("click", runPreflight);
 els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
+els.lampBtn.addEventListener("click", setLampOnSelectedDevices);
   // Removed ctsVerifier event listeners
 els.browseBtn.addEventListener("click", async () => {
   try {
@@ -263,6 +266,7 @@ function updateRunButton() {
   const testcaseCount = selectedTestcases().length;
   els.runBtn.textContent = `Run Selected (${count})`;
   els.runBtn.disabled = state.running || count === 0 || testcaseCount === 0;
+  els.lampBtn.disabled = state.running || count === 0;
   els.allTools.checked = state.tools.length === testcases.length;
   updateSelectToggle();
 }
@@ -497,6 +501,20 @@ async function installCtsVerifierOnDevices() {
   }
 }
 
+async function cleanupCtsVerifierOnDevices() {
+  const devices = selectedDevices();
+  if (!devices.length) return;
+  for (const device of devices) {
+    appendLog(`[cts-verifier] Cleaning up APK set on ${device.serial}...`);
+    try {
+      await invoke("cleanup_cts_verifier", { serial: device.serial });
+      appendLog(`[cts-verifier] Cleanup complete on ${device.serial}`);
+    } catch (error) {
+      appendLog(`[cts-verifier] Cleanup failed on ${device.serial}: ${error}`);
+    }
+  }
+}
+
 async function startSelectedCtsVerifierTests() {
   const devices = selectedDevices();
   const tests = state.ctsVerifier.tests.filter((test) => state.ctsVerifier.selected.has(test.testcase));
@@ -699,6 +717,25 @@ async function autoDetectAtmRoot() {
   }
 }
 
+async function setLampOnSelectedDevices() {
+  const devices = selectedDevices();
+  if (!devices.length) return;
+  els.lampBtn.disabled = true;
+  appendLog(`[launcher] Applying lamp shortcut: timeout=10m brightness=max devices=${devices.map((device) => device.serial).join(", ")}`);
+  try {
+    for (const device of devices) {
+      try {
+        await invoke("set_device_lamp", { serial: device.serial });
+        appendLog(`[launcher] Lamp shortcut applied on ${device.serial}`);
+      } catch (error) {
+        appendLog(`[launcher] Lamp shortcut failed on ${device.serial}: ${error}`);
+      }
+    }
+  } finally {
+    updateRunButton();
+  }
+}
+
 async function runBatch() {
   const devices = selectedDevices().map((d) => d.serial);
   const tools = selectedTestcases().map((testcase) => testcase.tool);
@@ -749,6 +786,7 @@ async function runBatch() {
         } catch (e) {
           appendLog(`[cts-verifier] Error: ${e}`);
         } finally {
+          await cleanupCtsVerifierOnDevices();
           state.activeTasks--;
           if (state.activeTasks <= 0) finishBatch(0);
         }
