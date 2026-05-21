@@ -30,6 +30,7 @@ const state = {
     results: new Map(),
   },
   activeTasks: 0,
+  pendingCtsAfterBatch: false,
 };
 
 const testcases = [
@@ -249,6 +250,16 @@ function finishBatch(exitCode) {
 
 listen("atm-run-finished", (event) => {
   const exitCode = Number(event.payload?.exit_code || 0);
+  if (state.pendingCtsAfterBatch) {
+    state.pendingCtsAfterBatch = false;
+    if (exitCode === 130) {
+      finishBatch(exitCode);
+      return;
+    }
+    appendLog("[cts-verifier] Java batch finished; starting CTS Verifier sequence...");
+    runCtsVerifierSequence(exitCode);
+    return;
+  }
   state.activeTasks--;
   if (state.activeTasks <= 0) finishBatch(exitCode);
 });
@@ -740,16 +751,15 @@ async function runBatch() {
   const devices = selectedDevices().map((d) => d.serial);
   const tools = selectedTestcases().map((testcase) => testcase.tool);
   if (!devices.length || !tools.length) return;
-  
+
   const javaTools = tools.filter(t => t !== "cts_verifier");
   const runCts = tools.includes("cts_verifier");
-  
+
   state.running = true;
   state.runStartedAt = Date.now();
   state.results.clear();
-  state.activeTasks = 0;
-  if (javaTools.length > 0) state.activeTasks++;
-  if (runCts) state.activeTasks++;
+  state.pendingCtsAfterBatch = false;
+  state.activeTasks = javaTools.length > 0 || runCts ? 1 : 0;
 
   devices.forEach((serial) => {
     tools.forEach((tool, index) => {
@@ -766,6 +776,11 @@ async function runBatch() {
   appendLog(`[launcher] Starting batch: devices=${devices.join(", ")} tools=${tools.join(", ")}`);
   render();
   try {
+    if (runCts && javaTools.length > 0) {
+      state.pendingCtsAfterBatch = true;
+      appendLog("[cts-verifier] Queued after Java tools complete.");
+    }
+
     if (javaTools.length > 0) {
       await invoke("run_batch", {
         request: {
@@ -778,25 +793,29 @@ async function runBatch() {
       });
     }
 
-    if (runCts) {
-      (async () => {
-        try {
-          await installCtsVerifierOnDevices();
-          await runSelectedCtsVerifierTests();
-        } catch (e) {
-          appendLog(`[cts-verifier] Error: ${e}`);
-        } finally {
-          await cleanupCtsVerifierOnDevices();
-          state.activeTasks--;
-          if (state.activeTasks <= 0) finishBatch(0);
-        }
-      })();
+    if (runCts && javaTools.length === 0) {
+      appendLog("[cts-verifier] Starting CTS Verifier sequence...");
+      runCtsVerifierSequence(0);
     }
   } catch (error) {
     appendLog(`[launcher] Run failed: ${error}`);
+    state.pendingCtsAfterBatch = false;
     finishBatch(1);
   }
   render();
+}
+
+async function runCtsVerifierSequence(finalExitCode) {
+  try {
+    await installCtsVerifierOnDevices();
+    await runSelectedCtsVerifierTests();
+  } catch (e) {
+    appendLog(`[cts-verifier] Error: ${e}`);
+  } finally {
+    await cleanupCtsVerifierOnDevices();
+    state.activeTasks--;
+    if (state.activeTasks <= 0) finishBatch(finalExitCode);
+  }
 }
 
 async function cancelBatch() {
