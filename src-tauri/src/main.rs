@@ -727,6 +727,46 @@ fn open_cts_verifier(serial: String) -> Result<(), String> {
     }
 }
 
+fn parse_bounds_center(xml: &str, text: &str) -> Option<(i32, i32)> {
+    let text_marker = format!("text=\"{}\"", text);
+    let desc_marker = format!("content-desc=\"{}\"", text);
+    let node_pos = xml.find(&text_marker).or_else(|| xml.find(&desc_marker))?;
+    let bounds_pos = xml[node_pos..].find("bounds=\"")? + node_pos + "bounds=\"".len();
+    let bounds_end = xml[bounds_pos..].find('"')? + bounds_pos;
+    let bounds = &xml[bounds_pos..bounds_end];
+    let values: Vec<i32> = bounds
+        .split(|ch| ch == '[' || ch == ']' || ch == ',')
+        .filter_map(|value| value.trim().parse::<i32>().ok())
+        .collect();
+    if values.len() == 4 {
+        Some(((values[0] + values[2]) / 2, (values[1] + values[3]) / 2))
+    } else {
+        None
+    }
+}
+
+fn trigger_cts_verifier_export(serial: &str) -> Result<(), String> {
+    let _ = adb_device_output(serial, &["shell", "input", "keyevent", "224"]);
+    open_cts_verifier(serial.to_string())?;
+    thread::sleep(Duration::from_millis(1200));
+
+    adb_device_output(serial, &["shell", "input", "keyevent", "82"])?;
+    thread::sleep(Duration::from_millis(600));
+
+    let dump_path = "/sdcard/cts_export_window.xml";
+    let _ = adb_device_output(serial, &["shell", "uiautomator", "dump", dump_path]);
+    let xml = adb_device_output(serial, &["shell", "cat", dump_path])?;
+    let (x, y) = parse_bounds_center(&xml, "Export")
+        .ok_or_else(|| "Could not find Export menu item in CTS Verifier UI".to_string())?;
+    adb_device_output(
+        serial,
+        &["shell", "input", "tap", &x.to_string(), &y.to_string()],
+    )?;
+    thread::sleep(Duration::from_millis(2500));
+    let _ = adb_device_output(serial, &["shell", "sync"]);
+    Ok(())
+}
+
 #[tauri::command]
 fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result<String, String> {
     let root = resolve_atm_root(atm_root)?;
@@ -735,11 +775,12 @@ fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result
         .map_err(|err| format!("Cannot create {}: {err}", target.display()))?;
 
     let adb = adb_path();
+    let export_error = trigger_cts_verifier_export(&serial).err();
     let mut sync = Command::new(&adb);
     sync.args(["-s", &serial, "shell", "sync"]);
     let _ = run_output(&mut sync);
 
-    let remote_paths = [
+    let mut remote_paths: Vec<String> = [
         "/sdcard/verifierReports/.",
         "/sdcard/VerifierReports/.",
         "/storage/emulated/0/verifierReports/.",
@@ -748,12 +789,34 @@ fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result
         "/sdcard/Android/data/com.android.cts.verifier/files/verifierReports/.",
         "/storage/emulated/0/Android/data/com.android.cts.verifier/files/VerifierReports/.",
         "/storage/emulated/0/Android/data/com.android.cts.verifier/files/verifierReports/.",
-    ];
+        "/sdcard/Android/data/com.example.autoctsver/files/.",
+        "/storage/emulated/0/Android/data/com.example.autoctsver/files/.",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+
+    let discovery = adb_device_output(
+        &serial,
+        &[
+            "shell",
+            "sh",
+            "-c",
+            "ls -d /sdcard/*Verifier*Report* /sdcard/*verifier*report* 2>/dev/null | head -n 10",
+        ],
+    )
+    .unwrap_or_default();
+    for line in discovery.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            remote_paths.push(format!("{}/.", trimmed.trim_end_matches('/')));
+        }
+    }
 
     let mut last_error = String::new();
     for remote in remote_paths {
         let mut pull = Command::new(&adb);
-        pull.args(["-s", &serial, "pull", remote, &target.to_string_lossy()]);
+        pull.args(["-s", &serial, "pull", &remote, &target.to_string_lossy()]);
         match run_output(&mut pull) {
             Ok(output) => {
                 if output.to_lowercase().contains("pulled") || target_has_files(&target) {
@@ -767,10 +830,11 @@ fn pull_cts_verifier_results(serial: String, atm_root: Option<String>) -> Result
     if target_has_files(&target) {
         return Ok(target.display().to_string());
     }
-    Err(format!(
-        "No CTS Verifier reports found for {serial}. Export results in CTS Verifier first. {}",
-        last_error.trim()
-    ))
+    let hint = "No CTS Verifier reports found on device. Try exporting results in CTS Verifier manually, or ensure storage permission/paths are accessible.";
+    if let Some(error) = export_error {
+        return Err(format!("{hint} Export automation error: {}", error.trim()));
+    }
+    Err(format!("{hint} {}", last_error.trim()))
 }
 
 #[tauri::command]
@@ -2067,9 +2131,14 @@ fn first_non_blank<'a>(values: &'a [&str]) -> &'a str {
 }
 
 fn target_has_files(path: &Path) -> bool {
-    std::fs::read_dir(path)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.flatten())
-        .any(|entry| entry.path().is_file())
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if entry_path.is_file() || (entry_path.is_dir() && target_has_files(&entry_path)) {
+            return true;
+        }
+    }
+    false
 }

@@ -923,6 +923,7 @@ async function runCtsVerifierSequence() {
   } catch (e) {
     appendLog(`[cts-verifier] Error: ${e}`);
   } finally {
+    await pullCtsVerifierReports();
     await cleanupCtsVerifierOnDevices();
 
     if (state.pendingJavaAfterCts && state.running) {
