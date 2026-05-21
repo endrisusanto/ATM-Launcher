@@ -190,7 +190,7 @@ document.body.appendChild(confettiContainer);
 
 function startDollarConfetti() {
   if (confettiInterval) return;
-  const emojis = ["💲", "🪙", "💵"];
+  const emojis = ["💲", "💸", "💵"];
   confettiInterval = setInterval(() => {
     const el = document.createElement("div");
     el.className = "confetti";
@@ -198,7 +198,7 @@ function startDollarConfetti() {
     el.style.left = Math.random() * 100 + "vw";
     el.style.animationDuration = Math.random() * 2 + 3 + "s";
     el.style.fontSize = Math.random() * 10 + 20 + "px";
-    
+
     confettiContainer.appendChild(el);
     setTimeout(() => el.remove(), 5000);
   }, 150);
@@ -301,7 +301,7 @@ function render() {
 function updateRunButton() {
   const count = state.selected.size;
   const testcaseCount = selectedTestcases().length;
-  
+
   if (els.concurrencyInput && !state.running) {
     els.concurrencyInput.value = count > 0 ? count : 1;
     state.concurrency = Math.max(1, count);
@@ -785,7 +785,7 @@ async function runBatch() {
   const devices = selectedDevices().map((d) => d.serial);
   const tools = selectedTestcases().map((testcase) => testcase.tool);
   if (!devices.length || !tools.length) return;
-  
+
   stopDollarConfetti();
 
   try {
@@ -794,7 +794,7 @@ async function runBatch() {
   } catch (err) {
     appendLog(`[launcher] Warning: Failed to clear results: ${err}`);
   }
-  
+
   const javaTools = tools.filter(t => t !== "cts_verifier");
   const runCts = tools.includes("cts_verifier");
 
@@ -851,7 +851,7 @@ async function runCtsVerifierSequence() {
     appendLog(`[cts-verifier] Error: ${e}`);
   } finally {
     await cleanupCtsVerifierOnDevices();
-    
+
     if (state.pendingJavaAfterCts && state.running) {
       const javaTools = state.pendingJavaAfterCts;
       state.pendingJavaAfterCts = null;
