@@ -947,13 +947,24 @@ fn run_cts_verifier_test_blocking(
 }
 
 #[tauri::command]
-fn clear_results(atm_root: Option<String>) -> Result<(), String> {
+fn clear_results(atm_root: Option<String>, serials: Vec<String>) -> Result<(), String> {
     let root = resolve_atm_root(atm_root)?;
-    let results_dir = root.join("results");
-    if results_dir.exists() {
-        let _ = std::fs::remove_dir_all(&results_dir);
+    
+    for serial in serials {
+        let model = adb_device_output(&serial, &["shell", "getprop", "ro.product.model"])
+            .unwrap_or_else(|_| serial.clone());
+        let build = adb_device_output(&serial, &["shell", "getprop", "ro.build.version.incremental"])
+            .unwrap_or_else(|_| "unknown-build".to_string());
+            
+        let target_dir = root.join("results")
+            .join(safe_path_segment(first_non_blank(&[model.trim(), &serial])))
+            .join(safe_path_segment(first_non_blank(&[build.trim(), "unknown-build"])));
+            
+        if target_dir.exists() {
+            let _ = std::fs::remove_dir_all(&target_dir);
+        }
+        let _ = std::fs::create_dir_all(&target_dir);
     }
-    let _ = std::fs::create_dir_all(&results_dir);
     Ok(())
 }
 

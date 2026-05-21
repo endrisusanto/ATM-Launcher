@@ -789,8 +789,8 @@ async function runBatch() {
   stopDollarConfetti();
 
   try {
-    await invoke("clear_results", { atmRoot: state.atmRoot || null });
-    appendLog(`[launcher] Test results folder cleared.`);
+    await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices });
+    appendLog(`[launcher] Test results folder cleared for devices: ${devices.join(", ")}.`);
   } catch (err) {
     appendLog(`[launcher] Warning: Failed to clear results: ${err}`);
   }
