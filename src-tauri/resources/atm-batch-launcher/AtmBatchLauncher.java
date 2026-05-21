@@ -1270,12 +1270,6 @@ public class AtmBatchLauncher {
         return value.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
-    private static Path toolResultDir(DeviceInfo device, String folderName) {
-        String model = firstNonBlank(device.model, device.serial, "unknown-model");
-        String build = firstNonBlank(device.build, "unknown-build");
-        return ROOT.resolve("results").resolve(safeName(model)).resolve(safeName(build)).resolve(folderName);
-    }
-
     private static String printable(List<String> command) {
         return command.stream().map(AtmBatchLauncher::quoteIfNeeded).collect(Collectors.joining(" "));
     }
@@ -1503,7 +1497,7 @@ public class AtmBatchLauncher {
             return switch (this) {
                 case GETPROP -> Arrays.asList(JAVA_BIN, "-jar", jar, "silent");
                 case BVT -> Arrays.asList(JAVA_BIN, "-jar", jar, device.serial);
-                case SVT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--silent", "-s", device.serial, "-o", toolResultDir(device, "SVT").toString());
+                case SVT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--silent", "-s", device.serial, "-o", ROOT.toString());
                 case SDT -> Arrays.asList(JAVA_BIN, "-jar", jar, "--silent");
                 default -> Arrays.asList(JAVA_BIN, "-jar", jar);
             };
