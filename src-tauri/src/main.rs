@@ -1557,7 +1557,7 @@ fn resolve_cts_apk_dir(
 fn normalize_android_resource_version(release: &str, oneui: &str) -> String {
     let oneui_version = oneui.trim().parse::<u32>().unwrap_or(0);
     let release = release.trim();
-    if release.starts_with("16") && oneui_version >= 80500 {
+    if oneui_version >= 80500 {
         "16.1".to_string()
     } else if release.starts_with("16") {
         "16".to_string()
