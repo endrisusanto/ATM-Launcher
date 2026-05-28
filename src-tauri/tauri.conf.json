@@ -35,6 +35,24 @@
     "resources": {
       "resources/atm-batch-launcher/*": "atm-batch-launcher/",
       "resources/assets/*": "assets/"
+    },
+    "linux": {
+      "deb": {
+        "conflicts": [
+          "atm-batch-launcher"
+        ],
+        "replaces": [
+          "atm-batch-launcher"
+        ]
+      },
+      "rpm": {
+        "conflicts": [
+          "atm-batch-launcher"
+        ],
+        "obsoletes": [
+          "atm-batch-launcher"
+        ]
+      }
     }
   }
 }

@@ -459,6 +459,12 @@ h2 {
   cursor: default;
 }
 
+.scrcpy-button {
+  border-color: #2c7a51;
+  color: var(--green);
+  background: #0b2719;
+}
+
 .device-meta {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -888,4 +894,208 @@ td:nth-child(5) {
     transform: translateY(110vh) rotate(360deg) translateX(20px);
     opacity: 0;
   }
+}
+
+.scrcpy-wrap {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  min-width: 760px;
+  min-height: 520px;
+  background: #080909;
+}
+
+.scrcpy-grid {
+  --scrcpy-count: 1;
+  --scrcpy-cols: 1;
+  --scrcpy-rows: 1;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--scrcpy-cols), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--scrcpy-rows), minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 0 6px;
+  overflow: hidden;
+}
+
+.scrcpy-floating-refresh {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 50;
+  height: 36px;
+  border: 1px solid rgba(244, 247, 247, 0.24);
+  border-radius: 6px;
+  background: rgba(5, 7, 7, 0.72);
+  color: var(--text);
+  padding: 0 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.scrcpy-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #030404;
+}
+
+.scrcpy-video-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  color: #4f5a5a;
+  text-align: center;
+  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+.scrcpy-video-placeholder.skeleton::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, #050606 0%, #111616 42%, #1c2424 50%, #111616 58%, #050606 100%);
+  background-size: 220% 100%;
+  animation: scrcpy-skeleton 1.2s linear infinite;
+}
+
+.scrcpy-video-placeholder.skeleton strong,
+.scrcpy-video-placeholder.skeleton span {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes scrcpy-skeleton {
+  to {
+    background-position-x: -220%;
+  }
+}
+
+.scrcpy-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #030404;
+}
+
+.scrcpy-video-placeholder strong {
+  color: #758181;
+  font-size: 22px;
+}
+
+.scrcpy-video-placeholder span {
+  font-size: 12px;
+}
+
+.scrcpy-overlay {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: min(88%, 280px);
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.scrcpy-overlay header {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 0;
+  text-align: center;
+}
+
+.scrcpy-overlay h2 {
+  color: var(--text);
+  font-size: 13px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.scrcpy-overlay p {
+  margin-top: 4px;
+  color: #d9e1e1;
+  font-size: 11px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.scrcpy-overlay b {
+  display: grid;
+  gap: 2px;
+  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.scrcpy-overlay b small {
+  color: #d9e1e1;
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.scrcpy-tile-actions {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+.scrcpy-tile-actions button {
+  height: 26px;
+  border: 1px solid rgba(244, 247, 247, 0.24);
+  border-radius: 5px;
+  background: rgba(5, 7, 7, 0.58);
+  color: #f4f7f7;
+  padding: 0 8px;
+  font-size: 9px;
+  font-weight: 900;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
+  cursor: pointer;
+}
+
+.scrcpy-tile-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.scrcpy-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scrcpy-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.scrcpy-meta small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 9px;
 }
