@@ -407,6 +407,7 @@ fn connect_wifi_with_util(
 fn ensure_scrcpy_wrap_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("scrcpy-wrap") {
         let _ = window.show();
+        let _ = window.unminimize();
         let _ = window.set_focus();
         return Ok(());
     }
