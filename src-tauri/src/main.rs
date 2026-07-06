@@ -453,7 +453,11 @@ fn capture_scrcpy_frame(serial: &str) -> Result<Vec<u8>, String> {
         return Ok(primary);
     }
 
-    let remote_path = format!("/sdcard/atm_scrcpy_frame_{serial}.png");
+    let safe_serial = serial
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>();
+    let remote_path = format!("/sdcard/atm_scrcpy_frame_{safe_serial}.png");
     adb_device_output(serial, &["shell", "screencap", "-p", &remote_path])?;
     let fallback = adb_device_binary(serial, &["exec-out", "cat", &remote_path])?;
     let _ = adb_device_output(serial, &["shell", "rm", "-f", &remote_path]);

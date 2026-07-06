@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for the ATM Batch Launcher window",
-  "windows": ["main"],
+  "windows": ["main", "scrcpy-wrap"],
   "permissions": [
     "core:default",
     "dialog:default",
