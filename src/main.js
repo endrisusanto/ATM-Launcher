@@ -1033,9 +1033,14 @@ async function openScrcpyWrap(serial) {
 }
 
 async function runBatch() {
+  if (state.running) return;
+
   const devices = selectedDevices().map((d) => d.serial);
   const tools = selectedTestcases().map((testcase) => testcase.tool);
   if (!devices.length || !tools.length) return;
+
+  state.running = true;
+  els.runBtn.disabled = true;
 
   stopDollarConfetti();
 
@@ -1071,7 +1076,6 @@ async function runBatch() {
   const javaTools = tools.filter(t => t !== "cts_verifier");
   const runCts = tools.includes("cts_verifier");
 
-  state.running = true;
   state.runStartedAt = Date.now();
   state.results.clear();
   state.pendingJavaAfterCts = null;
@@ -1085,7 +1089,6 @@ async function runBatch() {
       }
     });
   });
-  els.runBtn.disabled = true;
   els.cancelBtn.disabled = false;
   els.statusLine.textContent = "Running";
   appendLog(`[launcher] Starting batch: devices=${devices.join(", ")} tools=${tools.join(", ")}`);
@@ -1255,7 +1258,10 @@ function markRunningAs(status) {
 }
 
 function appendLog(line) {
-  state.logLines.push(line);
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  state.logLines.push(`[${timestamp}] ${line}`);
   if (state.logLines.length > 1200) state.logLines.shift();
   renderLog();
 }
