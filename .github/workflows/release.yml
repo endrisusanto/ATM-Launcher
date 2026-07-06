@@ -17,9 +17,9 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-22.04
-            args: --bundles deb,rpm,appimage
+            args: --bundles deb,rpm
           - platform: windows-latest
-            args: --bundles nsis,msi
+            args: --bundles msi
 
     steps:
       - name: Checkout
@@ -56,6 +56,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: ATM Launcher ${{ github.ref_name }}
           releaseBody: Automated release build for Linux and Windows.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
