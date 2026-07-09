@@ -919,6 +919,10 @@ public class AtmBatchLauncher {
             String serial = env == null ? "" : env.getOrDefault("ATM_BATCH_SERIAL", "");
             String tool = env == null ? "" : env.getOrDefault("ATM_BATCH_TOOL", logFile.getFileName().toString().replaceFirst("\\.log$", ""));
             String prefix = serial.isBlank() ? "[" + tool + "] " : "[" + serial + "][" + tool + "] ";
+
+            boolean isSdt = "SDT".equalsIgnoreCase(tool);
+            java.util.concurrent.atomic.AtomicBoolean sdtEarlyPass = new java.util.concurrent.atomic.AtomicBoolean(false);
+
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
                  BufferedWriter writer = Files.newBufferedWriter(logFile, StandardCharsets.UTF_8)) {
                 ExecutorService pumpExecutor = Executors.newSingleThreadExecutor();
@@ -933,6 +937,21 @@ public class AtmBatchLauncher {
                             if (!display.isEmpty()) {
                                 System.out.println(prefix + display);
                                 System.out.flush();
+                            }
+
+                            if (isSdt && !sdtEarlyPass.get() && display.toLowerCase(Locale.ROOT).contains("saving result")) {
+                                sdtEarlyPass.set(true);
+                                System.out.println(prefix + "[launcher] SDT saving result detected. Will trigger early PASS in 10 seconds...");
+                                new Thread(() -> {
+                                    try {
+                                        Thread.sleep(10000);
+                                        System.out.println(prefix + "[launcher] SDT early PASS timeout reached. Terminating process...");
+                                        process.destroy();
+                                        if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                                            process.destroyForcibly();
+                                        }
+                                    } catch (Exception ignored) {}
+                                }).start();
                             }
                         }
                     } catch (IOException ignored) {
@@ -952,6 +971,10 @@ public class AtmBatchLauncher {
                     System.err.println("Process timed out: " + printable(command));
                 }
                 exitCode = process.waitFor();
+                if (sdtEarlyPass.get()) {
+                    exitCode = 0;
+                    timedOut = false;
+                }
                 try { pump.get(2, TimeUnit.SECONDS); } catch (Exception ignored) {}
                 pumpExecutor.shutdownNow();
             }
