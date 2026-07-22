@@ -481,6 +481,7 @@ public class AtmBatchLauncher {
                         || p.toString().contains(device.serial)
                         || (!build.isBlank() && p.toString().contains(build)))
                 .collect(Collectors.toList());
+        if (tool == ToolProfile.SDT && preferred.isEmpty()) return List.of();
         return preferred.isEmpty() ? all : preferred;
     }
 
@@ -1076,6 +1077,7 @@ public class AtmBatchLauncher {
                         || p.toString().contains(device.serial)
                         || (!build.isBlank() && p.toString().contains(build)))
                 .collect(Collectors.toList());
+        if (tool == ToolProfile.SDT && preferred.isEmpty()) return List.of();
         return preferred.isEmpty() ? all : preferred;
     }
 
