@@ -367,7 +367,7 @@ public class AtmBatchLauncher {
                             log("[" + device.serial + "] BVT_SUMMARY\t" + bvtSummary.total + "\t" + bvtSummary.pass + "\t" + bvtSummary.failed));
                     for (BvtSubtest subtest : bvtSubtestsFromSummary(summary)) {
                         if (!subtest.isFailed()) continue;
-                        log("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name);
+                        log("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name + "\t" + subtest.detail);
                     }
                 }
                 updateDeviceLastResult(device, tool.displayName + ": " + summary.status);
@@ -446,11 +446,10 @@ public class AtmBatchLauncher {
             List<Path> candidates = findResultCandidates(device, tool, startedAt);
             if (candidates.isEmpty()) {
                 if (tool == ToolProfile.SDT) {
-                    if (exitCode == 0) {
-                        return new ResultSummary("PASS", "exit=0 (SDT saved result externally)");
-                    }
                     ResultSummary deviceResult = inspectDeviceSdtResult(adb(), device);
-                    return deviceResult;
+                    return "NOTEXECUTED".equals(deviceResult.status) && exitCode == 0
+                            ? new ResultSummary("PASS", "exit=0 (SDT saved result externally)")
+                            : deviceResult;
                 }
                 return new ResultSummary("NOTEXECUTED", "no fresh result file found");
             }
@@ -821,7 +820,7 @@ public class AtmBatchLauncher {
                             System.out.println("[" + device.serial + "] BVT_SUMMARY\t" + bvtSummary.total + "\t" + bvtSummary.pass + "\t" + bvtSummary.failed));
                     for (BvtSubtest subtest : bvtSubtestsFromSummary(summary)) {
                         if (!subtest.isFailed()) continue;
-                        System.out.println("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name);
+                        System.out.println("[" + device.serial + "] BVT_SUBTEST\t" + subtest.status + "\t" + subtest.name + "\t" + subtest.detail);
                     }
                 }
                 if (outcome.exitCode != 0 || outcome.timedOut || !isSuccessfulStatus(summary.status)) ok = false;
@@ -1042,11 +1041,10 @@ public class AtmBatchLauncher {
             List<Path> candidates = staticFindResultCandidates(device, tool, startedAt);
             if (candidates.isEmpty()) {
                 if (tool == ToolProfile.SDT) {
-                    if (exitCode == 0) {
-                        return new ResultSummary("PASS", "exit=0 (SDT saved result externally)");
-                    }
                     ResultSummary deviceResult = inspectDeviceSdtResult(cliAdbPath, device);
-                    return deviceResult;
+                    return "NOTEXECUTED".equals(deviceResult.status) && exitCode == 0
+                            ? new ResultSummary("PASS", "exit=0 (SDT saved result externally)")
+                            : deviceResult;
                 }
                 return new ResultSummary("NOTEXECUTED", "no fresh result file found");
             }
@@ -1232,7 +1230,12 @@ public class AtmBatchLauncher {
                         "/sdcard/SDTResults.zip", destination.toString()),
                 ROOT, null, Duration.ofMinutes(2));
         if (pull.exitCode == 0 && Files.isRegularFile(destination)) {
-            return new ResultSummary("PASS", "pulled device result to " + destination);
+            try {
+                int extracted = extractSdtResults(destination, destination.getParent());
+                return new ResultSummary("PASS", "pulled and extracted " + destination + " (" + extracted + " files)");
+            } catch (IOException ex) {
+                return new ResultSummary("ERROR", "pulled SDT result but extraction failed: " + ex.getMessage());
+            }
         }
         return new ResultSummary("PASS", "device file exists: /sdcard/SDTResults.zip; pull exit=" + pull.exitCode);
     }
@@ -1246,6 +1249,25 @@ public class AtmBatchLauncher {
                 .resolve(safeName(build))
                 .resolve("SDT")
                 .resolve("SDTResults_" + safeName(csc) + ".zip");
+    }
+
+    private static int extractSdtResults(Path zip, Path outputDir) throws IOException {
+        int extracted = 0;
+        try (java.util.zip.ZipInputStream input = new java.util.zip.ZipInputStream(Files.newInputStream(zip))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = input.getNextEntry()) != null) {
+                Path target = outputDir.resolve(entry.getName()).normalize();
+                if (!target.startsWith(outputDir)) throw new IOException("invalid ZIP entry: " + entry.getName());
+                if (entry.isDirectory()) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.createDirectories(target.getParent());
+                    Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+                    extracted++;
+                }
+            }
+        }
+        return extracted;
     }
 
     private static boolean deviceSdtResultExists(String adbPath, String serial) {
@@ -1384,7 +1406,7 @@ public class AtmBatchLauncher {
     }
 
     private static void collectBvtTests(String text, String module, String testCase, List<BvtSubtest> subtests) {
-        Pattern testPattern = Pattern.compile("<Test\\b([^>]*)/?>", Pattern.DOTALL);
+        Pattern testPattern = Pattern.compile("<Test\\b([^>]*?)(?:/>|>(.*?)</Test>)", Pattern.DOTALL);
         Matcher testMatcher = testPattern.matcher(text);
         while (testMatcher.find()) {
             String attrs = testMatcher.group(1);
@@ -1395,8 +1417,17 @@ public class AtmBatchLauncher {
             if (!module.isBlank()) parts.add(module);
             if (!testCase.isBlank()) parts.add(testCase);
             parts.add(name);
-            subtests.add(new BvtSubtest(String.join(".", parts), normalizeBvtSubtestStatus(result)));
+            subtests.add(new BvtSubtest(String.join(".", parts), normalizeBvtSubtestStatus(result), failureDetail(testMatcher.group(2))));
         }
+    }
+
+    private static String failureDetail(String body) {
+        if (body == null || body.isBlank()) return "";
+        Matcher failure = Pattern.compile("<Failure\\b([^>]*)>(.*?)</Failure>", Pattern.DOTALL).matcher(body);
+        if (!failure.find()) return "";
+        String message = xmlAttr(failure.group(1), "message");
+        if (!message.isBlank()) return message;
+        return failure.group(2).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
     }
 
     private static String normalizeBvtSubtestStatus(String result) {
@@ -1530,7 +1561,7 @@ public class AtmBatchLauncher {
     private record CommandResult(int exitCode, String output) {}
     private record ProcessOutcome(int exitCode, boolean timedOut, long durationSeconds) {}
     private record ResultSummary(String status, String detail) {}
-    private record BvtSubtest(String name, String status) {
+    private record BvtSubtest(String name, String status, String detail) {
         boolean isFailed() {
             return "FAIL".equalsIgnoreCase(status) || "TIMEOUT".equalsIgnoreCase(status);
         }

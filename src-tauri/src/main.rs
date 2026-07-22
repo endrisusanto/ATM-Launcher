@@ -16,8 +16,6 @@ use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const WIFI_UTIL_PACKAGE: &str = "com.android.tradefed.utils.wifi";
-
 #[derive(Debug, Clone, Serialize)]
 struct DeviceInfo {
     serial: String,
@@ -177,43 +175,16 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
                 .get("ro.product.locale.region")
                 .cloned()
                 .unwrap_or_else(|| "INDONESIA".to_string()),
-            modem: first_non_empty(&[
+            modem: normalize_modem(first_non_empty(&[
                 props
                     .get("gsm.version.baseband")
                     .cloned()
                     .unwrap_or_default(),
                 props.get("ril.modem.board").cloned().unwrap_or_default(),
-            ]),
+            ])),
         });
     }
     Ok(devices)
-}
-
-#[tauri::command]
-fn connect_wifi(
-    app: AppHandle,
-    serial: String,
-    ssid: String,
-    password: Option<String>,
-) -> Result<String, String> {
-    let trimmed_ssid = ssid.trim();
-    if trimmed_ssid.is_empty() {
-        return Err("SSID is empty".to_string());
-    }
-
-    connect_wifi_with_util(&app, &serial, trimmed_ssid, password.as_deref())
-        .map(|message| redact_wifi_output(&message, password.as_deref()))
-        .or_else(|util_error| {
-            let fallback = connect_wifi_with_cmd(&serial, trimmed_ssid, password.as_deref())
-                .map(|message| redact_wifi_output(&message, password.as_deref()));
-            fallback.map_err(|cmd_error| {
-                format!(
-                    "WifiUtil failed: {}. cmd wifi fallback failed: {}",
-                    redact_wifi_output(&util_error, password.as_deref()),
-                    redact_wifi_output(&cmd_error, password.as_deref())
-                )
-            })
-        })
 }
 
 #[tauri::command]
@@ -311,97 +282,6 @@ async fn get_scrcpy_frame(serial: String) -> Result<Vec<u8>, String> {
     tauri::async_runtime::spawn_blocking(move || capture_scrcpy_frame(&serial))
         .await
         .map_err(|err| err.to_string())?
-}
-
-fn connect_wifi_with_cmd(
-    serial: &str,
-    ssid: &str,
-    password: Option<&str>,
-) -> Result<String, String> {
-    let _ = adb_device_output(serial, &["shell", "svc", "wifi", "enable"]);
-    thread::sleep(Duration::from_millis(700));
-    let mut args = vec!["shell", "cmd", "wifi", "connect-network", ssid];
-    if let Some(password) = password.filter(|value| !value.is_empty()) {
-        args.push("wpa2");
-        args.push(password);
-    } else {
-        args.push("open");
-    }
-
-    let output = adb_device_output(serial, &args)?;
-    let lower = output.to_lowercase();
-    if lower.contains("failed") || lower.contains("error") || lower.contains("unknown") {
-        return Err(output);
-    }
-    Ok(if output.trim().is_empty() {
-        format!("cmd wifi connect requested for \"{ssid}\"")
-    } else {
-        output.trim().to_string()
-    })
-}
-
-fn connect_wifi_with_util(
-    app: &AppHandle,
-    serial: &str,
-    ssid: &str,
-    password: Option<&str>,
-) -> Result<String, String> {
-    let apk = wifi_util_apk_path(app)?;
-    let _ = adb_device_output(serial, &["shell", "svc", "wifi", "enable"]);
-    thread::sleep(Duration::from_millis(700));
-    let _ = adb_device_output(serial, &["shell", "pm", "uninstall", WIFI_UTIL_PACKAGE]);
-
-    install_wifi_util(serial, &apk)?;
-    thread::sleep(Duration::from_secs(2));
-
-    let add_command = if let Some(password) = password.filter(|value| !value.is_empty()) {
-        format!(
-            "am instrument -e method addWpaPskNetwork -e ssid {} -e psk {} -e hidden true -w {}/.WifiUtil",
-            wifi_shell_value(ssid),
-            wifi_shell_value(password),
-            WIFI_UTIL_PACKAGE
-        )
-    } else {
-        format!(
-            "am instrument -e method addOpenNetwork -e ssid {} -e hidden true -w {}/.WifiUtil",
-            wifi_shell_value(ssid),
-            WIFI_UTIL_PACKAGE
-        )
-    };
-    let add_result = adb_device_output(serial, &["shell", &add_command])?;
-    let network_id = parse_wifi_network_id(&add_result);
-    let associate_command = if let Some(id) = network_id.as_deref() {
-        format!(
-            "am instrument -e method associateNetwork -e id {} -w {}/.WifiUtil",
-            id, WIFI_UTIL_PACKAGE
-        )
-    } else {
-        format!(
-            "am instrument -e method associateNetwork -e ssid {} -w {}/.WifiUtil",
-            wifi_shell_value(ssid),
-            WIFI_UTIL_PACKAGE
-        )
-    };
-    adb_device_output(serial, &["shell", &associate_command])?;
-    adb_device_output(
-        serial,
-        &[
-            "shell",
-            &format!(
-                "am instrument -e method saveConfiguration -w {}/.WifiUtil",
-                WIFI_UTIL_PACKAGE
-            ),
-        ],
-    )?;
-    thread::sleep(Duration::from_secs(2));
-    let _ = adb_device_output(serial, &["shell", "pm", "uninstall", WIFI_UTIL_PACKAGE]);
-    Ok(format!(
-        "WifiUtil connected \"{}\"{}",
-        ssid,
-        network_id
-            .map(|id| format!(" network_id={id}"))
-            .unwrap_or_default()
-    ))
 }
 
 fn ensure_scrcpy_wrap_window(app: &AppHandle) -> Result<(), String> {
@@ -889,18 +769,6 @@ fn cancel_batch(app: AppHandle, run_state: State<'_, RunState>) -> Result<(), St
         }
     });
     Ok(())
-}
-
-#[tauri::command]
-fn open_device_results(serial: String, atm_root: Option<String>) -> Result<String, String> {
-    let root = resolve_atm_root(atm_root)?;
-    let results = root.join("results");
-    if !results.exists() {
-        return Err(format!("Results folder not found: {}", results.display()));
-    }
-    let target = find_device_results_dir(&results, &serial).unwrap_or(results);
-    open_path(&target)?;
-    Ok(target.display().to_string())
 }
 
 #[tauri::command]
@@ -1486,7 +1354,6 @@ fn main() {
             default_atm_root,
             preflight,
             list_devices,
-            connect_wifi,
             open_scrcpy_wrap,
             get_scrcpy_wrap_devices,
             get_scrcpy_frame,
@@ -1495,7 +1362,6 @@ fn main() {
             update_tools,
             run_batch,
             cancel_batch,
-            open_device_results,
             open_cts_verifier,
             pull_cts_verifier_results,
             cleanup_cts_verifier,
@@ -1540,67 +1406,6 @@ fn terminate_process_tree(pid: u32) {
     command.args(["/PID", &pid.to_string(), "/T", "/F"]);
     command.creation_flags(0x08000000);
     let _ = command.status();
-}
-
-fn find_device_results_dir(results: &Path, serial: &str) -> Option<PathBuf> {
-    let direct = results.join(serial);
-    if direct.is_dir() {
-        return Some(direct);
-    }
-    if let Some(atm_root) = results.parent() {
-        let cts = cts_verifier_result_dir(atm_root, serial);
-        if cts.is_dir() {
-            return Some(cts);
-        }
-    }
-    let needle = serial.to_lowercase();
-    let mut stack = vec![results.to_path_buf()];
-    let mut matches = Vec::new();
-    while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let path_text = path.to_string_lossy().to_lowercase();
-            if path_text.contains(&needle) {
-                matches.push(path.clone());
-            }
-            stack.push(path);
-        }
-    }
-    matches
-        .into_iter()
-        .max_by_key(|path| path.metadata().and_then(|meta| meta.modified()).ok())
-}
-
-fn open_path(path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("explorer");
-        command.arg(path);
-        command
-    };
-
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(path);
-        command
-    };
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(path);
-        command
-    };
-
-    command
-        .spawn()
-        .map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
-    Ok(())
 }
 
 fn resolve_atm_root(value: Option<String>) -> Result<PathBuf, String> {
@@ -1691,66 +1496,6 @@ fn adb_device_binary(serial: &str, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut command = Command::new(&adb);
     command.arg("-s").arg(serial).args(args);
     run_binary(&mut command)
-}
-
-fn install_wifi_util(serial: &str, apk: &Path) -> Result<String, String> {
-    let apk = apk.to_string_lossy();
-    match adb_device_output(
-        serial,
-        &["install", "-r", "-g", "--bypass-low-target-sdk-block", &apk],
-    ) {
-        Ok(output) => Ok(output),
-        Err(first_error) => adb_device_output(serial, &["install", "-r", "-g", &apk])
-            .map_err(|second_error| format!("{first_error}\n{second_error}")),
-    }
-}
-
-fn wifi_util_apk_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("WifiUtil.apk"));
-        candidates.push(resource_dir.join("assets").join("WifiUtil.apk"));
-    }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("assets")
-            .join("WifiUtil.apk"),
-    );
-    if let Ok(current_exe) = env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            candidates.push(exe_dir.join("assets").join("WifiUtil.apk"));
-            candidates.push(exe_dir.join("_up_").join("assets").join("WifiUtil.apk"));
-        }
-    }
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .ok_or_else(|| "WifiUtil.apk resource not found".to_string())
-}
-
-fn parse_wifi_network_id(output: &str) -> Option<String> {
-    let value = output.split("result=").nth(1).map(|tail| {
-        tail.chars()
-            .take_while(|ch| ch.is_ascii_digit())
-            .collect::<String>()
-    })?;
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
-}
-
-fn wifi_shell_value(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('$', "\\$")
-            .replace('`', "\\`")
-    )
 }
 
 fn run_output(command: &mut Command) -> Result<String, String> {
@@ -2325,6 +2070,16 @@ fn first_non_empty(values: &[String]) -> String {
         .unwrap_or_default()
 }
 
+fn normalize_modem(value: String) -> String {
+    let mut seen = HashSet::new();
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && seen.insert(*part))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn check_file(label: &str, path: PathBuf) -> String {
     format!(
         "{} {label}: {}",
@@ -2388,13 +2143,6 @@ fn next_available_suffix_path(path: &Path) -> PathBuf {
         }
     }
     unreachable!("suffix index loop is unbounded")
-}
-
-fn redact_wifi_output(output: &str, password: Option<&str>) -> String {
-    let Some(password) = password.filter(|value| !value.is_empty()) else {
-        return output.to_string();
-    };
-    output.replace(password, "********")
 }
 
 fn cts_verifier_result_dir(root: &Path, serial: &str) -> PathBuf {

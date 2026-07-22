@@ -14,11 +14,6 @@ const state = {
   running: false,
   loadedDevices: false,
   atmRoot: localStorage.getItem("atmRoot") || "",
-  wifi: {
-    enabled: localStorage.getItem("atmWifiAutoConnect") === "true",
-    ssid: localStorage.getItem("atmWifiSsid") || "RTT / IEEE 802.11",
-    password: localStorage.getItem("atmWifiPassword") || "1234qwer",
-  },
   logLines: [],
   results: new Map(),
   summary: {
@@ -308,22 +303,11 @@ app.innerHTML = `
         </header>
         <label class="path-field">
           <span>ATM Path</span>
-          <div style="display: flex; gap: 8px;">
-            <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" style="flex: 1; min-width: 0;" />
-            <button id="browseBtn" class="ghost-button" style="padding: 0 12px; height: 34px;">Browse</button>
+          <div class="path-row">
+            <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" />
+            <button id="browseBtn" class="ghost-button">Browse</button>
           </div>
         </label>
-        <section class="settings-section">
-          <label class="check"><input id="wifiAutoConnectInput" type="checkbox" /> Auto connect Wi-Fi before test</label>
-          <label class="path-field compact">
-            <span>Preset SSID</span>
-            <input id="wifiSsidInput" type="text" placeholder="Wi-Fi SSID" autocomplete="off" />
-          </label>
-          <label class="path-field compact">
-            <span>Password</span>
-            <input id="wifiPasswordInput" type="password" placeholder="Wi-Fi password" autocomplete="off" />
-          </label>
-        </section>
         <div class="settings-actions">
           <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
           <button class="ghost-button" id="updateToolsBtn">Update Tools</button>
@@ -354,9 +338,6 @@ const els = {
   settingsCheckBtn: document.querySelector("#settingsCheckBtn"),
   settingsSaveBtn: document.querySelector("#settingsSaveBtn"),
   atmRootInput: document.querySelector("#atmRootInput"),
-  wifiAutoConnectInput: document.querySelector("#wifiAutoConnectInput"),
-  wifiSsidInput: document.querySelector("#wifiSsidInput"),
-  wifiPasswordInput: document.querySelector("#wifiPasswordInput"),
   settingsOutput: document.querySelector("#settingsOutput"),
   clearLogBtn: document.querySelector("#clearLogBtn"),
   allTools: document.querySelector("#allTools"),
@@ -529,9 +510,33 @@ function renderDevices() {
     els.deviceList.innerHTML = `<div class="empty">No devices detected</div>`;
     return;
   }
-	els.deviceList.innerHTML = state.devices.map((device) => {
+
+  const groups = new Map();
+  [...state.devices]
+    .sort((a, b) => {
+      const stateRank = (device) => device.state === "device" ? 0 : 1;
+      const model = (device) => String(device.model || "Unknown").trim().toLocaleLowerCase();
+      return stateRank(a) - stateRank(b)
+        || model(a).localeCompare(model(b))
+        || String(a.serial || "").localeCompare(String(b.serial || ""));
+    })
+    .forEach((device) => {
+      const model = String(device.model || "Unknown").trim() || "Unknown";
+      const key = model.toLocaleLowerCase();
+      if (!groups.has(key)) groups.set(key, { model, devices: [] });
+      groups.get(key).devices.push(device);
+    });
+
+	els.deviceList.innerHTML = [...groups.values()].map(({ model, devices }, groupIndex) => `
+    <section class="model-group model-group-${groupIndex % 5}">
+      <header class="model-group-header">
+        <strong>${escapeHtml(model)}</strong>
+        <span>${devices.length} device${devices.length === 1 ? "" : "s"}</span>
+      </header>
+	      ${devices.map((device) => {
 	  const selected = state.selected.has(device.serial);
 	  const ready = device.state === "device";
+	  const badge = ready ? "READY" : String(device.state || "OFFLINE").toUpperCase();
 	  const lampActive = state.lampStates.get(device.serial);
 	  const progress = deviceProgress(device.serial);
     const flow = selected ? `
@@ -546,33 +551,36 @@ function renderDevices() {
       </div>
     ` : "";
     return `
-      <article class="device-card ${selected ? "selected" : ""} ${ready ? "" : "disabled"}" data-serial="${device.serial}" role="button" tabindex="${ready ? "0" : "-1"}">
+      <article class="device-card ${selected ? "selected" : ""} ${ready ? "" : "disabled"}" data-serial="${escapeHtml(device.serial)}" role="button" tabindex="${ready ? "0" : "-1"}">
         <div class="device-top">
           <span class="check-dot ${selected ? "checked" : ""}">${selected ? "✓" : ""}</span>
           <div>
             <strong>${escapeHtml(device.model || "Unknown")}</strong>
-	            <p><b>${escapeHtml(device.serial)}</b> · Android ${escapeHtml(device.android || "-")} · <span>${escapeHtml(deviceStateLabel(device.state))}</span></p>
+	            <p><b>${escapeHtml(device.serial)}</b> <span class="${device.state === "device" ? "connection-status connected" : ""}" ${device.state === "device" ? 'aria-label="Connected" title="Connected"' : ""}>${device.state === "device" ? "" : escapeHtml(deviceStateLabel(device.state))}</span></p>
 	          </div>
-	          <div style="display:flex; gap:6px;">
-	            <button class="result-pill lamp-button ${lampActive ? "active" : ""}" data-lamp="${device.serial}" ${ready ? "" : "disabled"} title="Toggle Brightness">💡</button>
-            <button class="result-pill scrcpy-button" data-scrcpy="${device.serial}" ${ready ? "" : "disabled"}>SCRCPY</button>
-            <button class="result-pill" data-serial="${device.serial}" ${ready ? "" : "disabled"}>RESULT</button>
-          </div>
+	          <div class="device-inline-actions">
+	            <span class="type-pill ${ready ? "" : "busy"}">${badge}</span>
+	            <button class="icon-mini lamp-button ${lampActive ? "active" : ""}" data-lamp="${escapeHtml(device.serial)}" ${ready ? "" : "disabled"} title="Toggle Brightness">💡</button>
+	            <button class="icon-mini scrcpy-button" data-scrcpy="${escapeHtml(device.serial)}" ${ready ? "" : "disabled"} title="Open scrcpy">📱</button>
+	          </div>
         </div>
         <div class="device-meta">
+	      <span><small>ANDROID</small>${escapeHtml(device.android || "-")}</span>
           <span><small>SPL</small>${escapeHtml(device.security_patch || "-")}</span>
-          <span><small>CARRIER</small>${escapeHtml(device.carrier || device.csc || "-")}</span>
-          <span><small>REGION</small>${escapeHtml(device.region || "INDONESIA")}</span>
+	      <span><small>CARRIER</small>${escapeHtml(device.carrier || device.csc || "-")}</span>
           <span><small>PDA</small>${escapeHtml(device.build || "-")}</span>
-          <span><small>MODEM</small>${escapeHtml(device.modem || device.build || "-")}</span>
+          <span><small>MODEM</small>${escapeHtml(device.modem || "-")}</span>
           <span><small>CSC</small>${escapeHtml(device.csc || "-")}</span>
         </div>
         ${flow}
       </article>
     `;
-  }).join("");
+      }).join("")}
+    </section>
+  `).join("");
   els.deviceList.querySelectorAll(".device-card").forEach((card) => {
     card.addEventListener("click", () => {
+      if (card.classList.contains("disabled")) return;
       const serial = card.dataset.serial;
       if (state.selected.has(serial)) state.selected.delete(serial);
       else state.selected.add(serial);
@@ -582,12 +590,6 @@ function renderDevices() {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       card.click();
-    });
-  });
-  els.deviceList.querySelectorAll("[data-serial].result-pill").forEach((button) => {
-    button.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openDeviceResults(button.dataset.serial);
     });
   });
   els.deviceList.querySelectorAll("[data-lamp]").forEach((button) => {
@@ -952,9 +954,6 @@ async function runPreflight() {
 
 function openSettings() {
   els.atmRootInput.value = state.atmRoot;
-  els.wifiAutoConnectInput.checked = state.wifi.enabled;
-  els.wifiSsidInput.value = state.wifi.ssid;
-  els.wifiPasswordInput.value = state.wifi.password;
   els.settingsOutput.textContent = state.atmRoot ? `Current ATM path:\n${state.atmRoot}` : "ATM path is empty. Use Auto Detect or paste the ATM root path.";
   els.settingsModal.classList.remove("hidden");
   els.atmRootInput.focus();
@@ -966,18 +965,9 @@ function closeSettings() {
 
 function saveSettings(writeLog = true) {
   state.atmRoot = els.atmRootInput.value.trim();
-  state.wifi.enabled = els.wifiAutoConnectInput.checked;
-  state.wifi.ssid = els.wifiSsidInput.value.trim();
-  state.wifi.password = els.wifiPasswordInput.value;
   if (state.atmRoot) localStorage.setItem("atmRoot", state.atmRoot);
   else localStorage.removeItem("atmRoot");
-  if (state.wifi.enabled) localStorage.setItem("atmWifiAutoConnect", "true");
-  else localStorage.removeItem("atmWifiAutoConnect");
-  if (state.wifi.ssid) localStorage.setItem("atmWifiSsid", state.wifi.ssid);
-  else localStorage.removeItem("atmWifiSsid");
-  if (state.wifi.password) localStorage.setItem("atmWifiPassword", state.wifi.password);
-  else localStorage.removeItem("atmWifiPassword");
-  if (writeLog) appendLog(`[launcher] Settings saved. ATM path: ${state.atmRoot || "(auto)"}, Wi-Fi: ${state.wifi.enabled && state.wifi.ssid ? state.wifi.ssid : "off"}`);
+  if (writeLog) appendLog(`[launcher] Settings saved. ATM path: ${state.atmRoot || "(auto)"}`);
 }
 
 async function autoDetectAtmRoot() {
@@ -1043,24 +1033,6 @@ async function runBatch() {
   els.runBtn.disabled = true;
 
   stopDollarConfetti();
-
-  if (state.wifi.enabled && state.wifi.ssid) {
-    appendLog(`[launcher] Auto connecting Wi-Fi "${state.wifi.ssid}" on selected devices...`);
-    for (const serial of devices) {
-      try {
-        const output = await invoke("connect_wifi", {
-          serial,
-          ssid: state.wifi.ssid,
-          password: state.wifi.password || null,
-        });
-        appendLog(`[${serial}] WIFI ${output}`);
-      } catch (err) {
-        appendLog(`[${serial}] WIFI warning: ${err}`);
-      }
-    }
-  } else if (state.wifi.enabled) {
-    appendLog("[launcher] Wi-Fi auto connect is enabled but SSID is empty; skipping.");
-  }
 
   try {
     const archived = await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices, tools });
@@ -1173,17 +1145,6 @@ function normalizeDialogPath(selected) {
   return selected.path || selected.file || selected.toString?.() || "";
 }
 
-async function openDeviceResults(serial) {
-  if (!serial) return;
-  appendLog(`[launcher] Opening results for ${serial}...`);
-  try {
-    const path = await invoke("open_device_results", { serial, atmRoot: state.atmRoot || null });
-    appendLog(`[launcher] Opened: ${path}`);
-  } catch (error) {
-    appendLog(`[launcher] Open results failed: ${error}`);
-  }
-}
-
 function selectedDevices() {
   return state.devices.filter((device) => state.selected.has(device.serial));
 }
@@ -1232,7 +1193,10 @@ function renderBvtSubtests(subtests = []) {
   if (!failed.length) return `${summary}<span class="subtest-empty">No failed BVT subtest</span>`;
   const shown = failed.slice(0, 12).map((item) => `
     <div class="subtest-row">
-      <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+      <div class="subtest-copy">
+        <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        <small title="${escapeHtml(item.detail || "Failure details unavailable")}">${escapeHtml(item.detail || "Failure details unavailable")}</small>
+      </div>
       <strong class="${statusClass(item.status)}">${formatStatus(item.status)}</strong>
     </div>
   `).join("");
@@ -1276,7 +1240,7 @@ function collectResultFromLine(line) {
     render();
     return;
   }
-  const subtest = line.match(/^\[([^\]]+)] BVT_SUBTEST\t([^\t]+)\t(.+)$/);
+  const subtest = line.match(/^\[([^\]]+)] BVT_SUBTEST\t([^\t]+)\t([^\t]+)(?:\t(.*))?$/);
   if (subtest) {
     const serial = subtest[1];
     const key = `${serial}:bvt`;
@@ -1285,6 +1249,7 @@ function collectResultFromLine(line) {
     const nextSubtests = [...currentSubtests, {
       status: normalizeSubtestStatus(subtest[2]),
       name: subtest[3],
+      detail: subtest[4] || "",
     }];
     nextSubtests.summary = currentSubtests.summary;
     state.results.set(key, { ...previous, subtests: nextSubtests });
