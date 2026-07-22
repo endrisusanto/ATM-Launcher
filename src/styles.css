@@ -864,22 +864,25 @@ td:nth-child(5) {
   gap: 5px;
   min-width: 0;
   max-height: 210px;
-  overflow-x: auto;
   overflow-y: auto;
 }
 
 .subtest-row {
   display: grid;
-  grid-template-columns: max-content 76px;
+  grid-template-columns: minmax(0, 1fr) 76px;
   gap: 8px;
   align-items: center;
   min-height: 20px;
-  width: max-content;
-  min-width: 100%;
+  min-width: 0;
   padding: 3px 5px;
   border: 1px solid var(--line-soft);
   border-radius: 4px;
   background: #0b0c0c;
+}
+
+.subtest-scroll {
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .subtest-copy {

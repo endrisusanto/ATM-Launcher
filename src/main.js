@@ -607,6 +607,9 @@ function renderDevices() {
 }
 
 function renderTests() {
+  const subtestScrolls = new Map(
+    [...els.testArea.querySelectorAll(".subtest-scroll")].map((element) => [element.dataset.scrollKey, element.scrollLeft]),
+  );
   const devices = selectedDevices();
   const visibleDevices = devices.length ? devices : state.devices.filter((d) => d.state === "device");
   if (!visibleDevices.length) {
@@ -625,7 +628,7 @@ function renderTests() {
         : result.time;
       let subtests = `<span class="subtest-empty">-</span>`;
       if (testcase.tool === "bvt") {
-        subtests = renderBvtSubtests(result.subtests);
+        subtests = renderBvtSubtests(result.subtests, key);
       } else if (testcase.tool === "cts_verifier") {
         subtests = renderCtsSubtests(device.serial);
       }
@@ -659,6 +662,9 @@ function renderTests() {
       </article>
     `;
   }).join("");
+  els.testArea.querySelectorAll(".subtest-scroll").forEach((element) => {
+    element.scrollLeft = subtestScrolls.get(element.dataset.scrollKey) || 0;
+  });
   els.testArea.querySelectorAll(".row-check").forEach((button) => {
     button.addEventListener("click", () => {
       toggleTool(button.dataset.tool);
@@ -1187,15 +1193,17 @@ function progressForStatus(status) {
   return 0;
 }
 
-function renderBvtSubtests(subtests = []) {
+function renderBvtSubtests(subtests = [], scrollKey = "bvt") {
   const failed = subtests.filter((item) => item.status === "Failed" || item.status === "Timeout");
   const summary = renderBvtSummary(subtests.summary);
   if (!failed.length) return `${summary}<span class="subtest-empty">No failed BVT subtest</span>`;
-  const shown = failed.slice(0, 12).map((item) => `
+  const shown = failed.slice(0, 12).map((item, index) => `
     <div class="subtest-row">
-      <div class="subtest-copy">
-        <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-        <small title="${escapeHtml(item.detail || "Failure details unavailable")}">${escapeHtml(item.detail || "Failure details unavailable")}</small>
+      <div class="subtest-scroll" data-scroll-key="${escapeHtml(`${scrollKey}:${index}`)}">
+        <div class="subtest-copy">
+          <span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+          <small title="${escapeHtml(item.detail || "Failure details unavailable")}">${escapeHtml(item.detail || "Failure details unavailable")}</small>
+        </div>
       </div>
       <strong class="${statusClass(item.status)}">${formatStatus(item.status)}</strong>
     </div>
