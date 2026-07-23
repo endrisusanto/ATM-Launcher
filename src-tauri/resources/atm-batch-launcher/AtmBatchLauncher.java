@@ -1247,7 +1247,7 @@ public class AtmBatchLauncher {
         String build = firstNonBlank(device.build, "unknown-build");
         String csc = firstNonBlank(device.csc, "UNKNOWN");
         return ROOT.resolve("results")
-                .resolve(safeName(model))
+                .resolve(safeName(model).replace('_', '-'))
                 .resolve(safeName(build))
                 .resolve("SDT")
                 .resolve("SDTResults_" + safeName(csc) + ".zip");
