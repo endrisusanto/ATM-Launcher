@@ -482,11 +482,17 @@ fn run_batch(
         #[cfg(windows)]
         command.creation_flags(0x08000000);
         #[cfg(unix)]
-        unsafe {
-            command.pre_exec(|| {
-                libc_setpgid();
-                Ok(())
-            });
+        {
+            // ponytail: fallback to :0 if DISPLAY is missing on Linux to prevent java.awt.HeadlessException
+            if std::env::var("DISPLAY").map_or(true, |v| v.trim().is_empty()) {
+                command.env("DISPLAY", ":0");
+            }
+            unsafe {
+                command.pre_exec(|| {
+                    libc_setpgid();
+                    Ok(())
+                });
+            }
         }
 
         let mut child = match command.spawn() {

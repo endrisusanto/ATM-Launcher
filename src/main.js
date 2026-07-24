@@ -611,12 +611,12 @@ function renderTests() {
     [...els.testArea.querySelectorAll(".subtest-scroll")].map((element) => [element.dataset.scrollKey, element.scrollLeft]),
   );
   const devices = selectedDevices();
-  const visibleDevices = devices.length ? devices : state.devices.filter((d) => d.state === "device");
-  if (!visibleDevices.length) {
-    els.testArea.innerHTML = `<div class="empty large">Refresh devices to load testcase groups</div>`;
+  // ponytail: hide test table when no device selected
+  if (!devices.length) {
+    els.testArea.innerHTML = `<div class="empty large">Select device untuk menampilkan test workspace</div>`;
     return;
   }
-  els.testArea.innerHTML = visibleDevices.map((device) => {
+  els.testArea.innerHTML = devices.map((device) => {
     const rows = testcases.map((testcase) => {
       const key = `${device.serial}:${testcase.tool}`;
       const result = state.results.get(key) || { status: "Standby", time: "-" };
@@ -931,7 +931,7 @@ async function refreshDevices() {
     state.devices = await invoke("list_devices");
     state.selected = new Set(
       state.devices
-        .filter((d) => d.state === "device" && (!state.loadedDevices || previousSelection.has(d.serial)))
+        .filter((d) => d.state === "device" && previousSelection.has(d.serial))
         .map((d) => d.serial),
     );
     state.loadedDevices = true;

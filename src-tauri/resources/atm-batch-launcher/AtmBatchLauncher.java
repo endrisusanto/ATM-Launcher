@@ -803,6 +803,13 @@ public class AtmBatchLauncher {
                 env.put("ATM_BATCH_TOOL", tool.displayName);
                 env.put("ATM_BATCH_RESULT_DIR", ROOT.resolve("results").toString());
                 env.put("ATM_BATCH_RUN_DIR", deviceRunDir.toString());
+                // ponytail: pass DISPLAY (default to :0) so Swing tools like Getprop.jar won't fail with HeadlessException on Linux
+                String display = System.getenv("DISPLAY");
+                env.put("DISPLAY", (display == null || display.isBlank()) ? ":0" : display);
+                // ponytail: adb shim so tool only sees the target device via `adb devices`
+                if (tool == ToolProfile.SDT || tool == ToolProfile.GETPROP) {
+                    setupAdbShim(deviceRunDir, device.serial, env, cliAdbPath);
+                }
                 List<String> command = tool.command(device, deviceRunDir);
                 System.out.println("[" + device.serial + "] START " + tool.displayName + ": " + printable(command));
                 System.out.println("[" + device.serial + "] LOG " + tool.displayName + ": " + logFile);
@@ -1569,4 +1576,47 @@ public class AtmBatchLauncher {
         }
     }
     private record BvtSummary(int total, int pass, int failed) {}
+
+    private static void setupAdbShim(Path deviceRunDir, String serial, Map<String, String> env, String adbPath) {
+        Path shimDir = deviceRunDir.resolve("adb-shim");
+        try {
+            Files.createDirectories(shimDir);
+            String adbExe = isWindows() ? "adb.bat" : "adb";
+            Path shimFile = shimDir.resolve(adbExe);
+            String content;
+            if (isWindows()) {
+                content = "@echo off\r\n" +
+                        "if \"%1\"==\"devices\" (\r\n" +
+                        "    echo List of devices attached\r\n" +
+                        "    echo %ANDROID_SERIAL%\tdevice\r\n" +
+                        "    exit /b 0\r\n" +
+                        ")\r\n" +
+                        "echo %* | findstr /C:\"SDTResults.zip\" >nul 2>&1 && ping 127.0.0.1 -n 6 >nul\r\n" +
+                        "\"" + adbPath + "\" %*\r\n";
+            } else {
+                content = "#!/bin/sh\n" +
+                        "if [ \"$1\" = \"devices\" ]; then\n" +
+                        "    echo \"List of devices attached\"\n" +
+                        "    echo \"${ANDROID_SERIAL}\tdevice\"\n" +
+                        "    exit 0\n" +
+                        "fi\n" +
+                        "case \"$*\" in *SDTResults.zip*) sleep 5 ;; esac\n" +
+                        "exec \"" + adbPath + "\" \"$@\"\n";
+            }
+            Files.writeString(shimFile, content, StandardCharsets.UTF_8);
+            if (!isWindows()) {
+                shimFile.toFile().setExecutable(true);
+            }
+            String pathKey = "PATH";
+            for (String key : System.getenv().keySet()) {
+                if (key.equalsIgnoreCase("PATH")) { pathKey = key; break; }
+            }
+            String existingPath = System.getenv(pathKey);
+            String separator = isWindows() ? ";" : ":";
+            String newPath = shimDir.toAbsolutePath().toString() + separator + (existingPath == null ? "" : existingPath);
+            env.put(pathKey, newPath);
+        } catch (IOException e) {
+            // ponytail: ignore shim failure, fallback to raw adb
+        }
+    }
 }
