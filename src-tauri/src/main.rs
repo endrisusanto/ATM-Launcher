@@ -21,6 +21,7 @@ struct DeviceInfo {
     serial: String,
     state: String,
     model: String,
+    build_type: String,
     android: String,
     build: String,
     csc: String,
@@ -139,6 +140,7 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
                     .cloned()
                     .unwrap_or_default(),
             ]),
+            build_type: props.get("ro.build.type").cloned().unwrap_or_default(),
             android: first_non_empty(&[
                 props
                     .get("ro.build.version.release")

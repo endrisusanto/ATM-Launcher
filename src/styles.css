@@ -422,6 +422,7 @@ h2 {
   color: var(--text);
   font-size: 11px;
   text-transform: uppercase;
+  cursor: pointer;
 }
 
 .model-group-header span {
@@ -540,6 +541,11 @@ h2 {
   background: var(--green);
   vertical-align: middle;
   animation: connection-heartbeat 1.4s ease-in-out infinite;
+}
+
+.connection-status.disconnected {
+  background: #ff4d5f;
+  animation: none;
 }
 
 @keyframes connection-heartbeat {

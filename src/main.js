@@ -529,14 +529,15 @@ function renderDevices() {
 
 	els.deviceList.innerHTML = [...groups.values()].map(({ model, devices }, groupIndex) => `
     <section class="model-group model-group-${groupIndex % 5}">
-      <header class="model-group-header">
+      <header class="model-group-header" data-model="${escapeHtml(model)}" role="button" tabindex="0" aria-label="Select ${escapeHtml(model)} devices">
         <strong>${escapeHtml(model)}</strong>
         <span>${devices.length} device${devices.length === 1 ? "" : "s"}</span>
       </header>
 	      ${devices.map((device) => {
 	  const selected = state.selected.has(device.serial);
 	  const ready = device.state === "device";
-	  const badge = ready ? "READY" : String(device.state || "OFFLINE").toUpperCase();
+	  const badge = ready ? String(device.build_type || "USER").toUpperCase() : String(device.state || "OFFLINE").toUpperCase();
+	  const connection = ready ? "connected" : "disconnected";
 	  const lampActive = state.lampStates.get(device.serial);
 	  const progress = deviceProgress(device.serial);
     const flow = selected ? `
@@ -556,7 +557,7 @@ function renderDevices() {
           <span class="check-dot ${selected ? "checked" : ""}">${selected ? "✓" : ""}</span>
           <div>
             <strong>${escapeHtml(device.model || "Unknown")}</strong>
-	            <p><b>${escapeHtml(device.serial)}</b> <span class="${device.state === "device" ? "connection-status connected" : ""}" ${device.state === "device" ? 'aria-label="Connected" title="Connected"' : ""}>${device.state === "device" ? "" : escapeHtml(deviceStateLabel(device.state))}</span></p>
+	            <p><b>${escapeHtml(device.serial)}</b> <span class="connection-status ${connection}" aria-label="${ready ? "Connected" : escapeHtml(deviceStateLabel(device.state))}" title="${ready ? "Connected" : escapeHtml(deviceStateLabel(device.state))}"></span></p>
 	          </div>
 	          <div class="device-inline-actions">
 	            <span class="type-pill ${ready ? "" : "busy"}">${badge}</span>
@@ -578,6 +579,27 @@ function renderDevices() {
       }).join("")}
     </section>
   `).join("");
+  els.deviceList.querySelectorAll(".model-group-header").forEach((header) => {
+    const toggleModel = () => {
+      const model = header.dataset.model.toLocaleLowerCase();
+      const devices = state.devices.filter((device) =>
+        device.state === "device" && String(device.model || "Unknown").trim().toLocaleLowerCase() === model,
+      );
+      if (!devices.length) return;
+      const allSelected = devices.every((device) => state.selected.has(device.serial));
+      devices.forEach((device) => {
+        if (allSelected) state.selected.delete(device.serial);
+        else state.selected.add(device.serial);
+      });
+      render();
+    };
+    header.addEventListener("click", toggleModel);
+    header.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      toggleModel();
+    });
+  });
   els.deviceList.querySelectorAll(".device-card").forEach((card) => {
     card.addEventListener("click", () => {
       if (card.classList.contains("disabled")) return;
