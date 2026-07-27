@@ -1,6 +1,6 @@
 [package]
 name = "atm-tauri-launcher"
-version = "0.1.61"
+version = "0.1.62"
 description = "ATM Batch Launcher"
 authors = ["ATM Automation"]
 edition = "2021"
