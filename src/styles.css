@@ -1,18 +1,19 @@
 :root {
   color-scheme: dark;
-  --bg: #080909;
-  --panel: #101111;
-  --panel-2: #151616;
-  --line: #242626;
-  --line-soft: #1d1f1f;
-  --text: #f4f7f7;
-  --muted: #96a0a0;
-  --blue: #2e8cff;
-  --cyan: #21d8ff;
-  --green: #22f08a;
-  --red: #ff4d61;
-  --yellow: #d8ce69;
-  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  --bg: #0b0d10;
+  --panel: #13161c;
+  --panel-2: #191c24;
+  --line: #272c38;
+  --line-soft: #1d212b;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --blue: #38bdf8;
+  --cyan: #0ea5e9;
+  --green: #10b981;
+  --red: #ef4444;
+  --yellow: #f59e0b;
+  --accent: #0ea5e9;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
@@ -21,10 +22,15 @@
   box-sizing: border-box;
 }
 
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 body {
   margin: 0;
-  min-width: 1120px;
-  min-height: 720px;
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -36,11 +42,33 @@ input {
 
 .shell {
   display: grid;
-  grid-template-columns: 420px minmax(400px, 1fr) minmax(360px, 540px);
-  grid-template-rows: 80px 1fr;
+  grid-template-columns: minmax(320px, 380px) minmax(320px, 1fr) minmax(300px, 440px);
+  grid-template-rows: 64px 1fr;
   width: 100vw;
   height: 100vh;
   background: var(--bg);
+}
+
+@media (max-width: 1024px) {
+  .shell {
+    grid-template-columns: minmax(280px, 320px) 1fr minmax(260px, 360px);
+  }
+}
+
+@media (max-width: 840px) {
+  .shell {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .titlebar {
+    height: 56px;
+    flex-shrink: 0;
+  }
+  .devices-pane, .workspace, .summary-pane {
+    height: auto;
+    min-height: 300px;
+  }
 }
 
 .splash {
@@ -379,13 +407,9 @@ h2 {
 }
 
 .lamp-button.active {
-  color: #fff6a3;
-  border-color: #f2d84b;
-  background: radial-gradient(circle at 50% 45%, rgba(242, 216, 75, 0.32), #2a2508 72%);
-  box-shadow:
-    0 0 0 1px rgba(242, 216, 75, 0.28),
-    0 0 16px rgba(242, 216, 75, 0.72),
-    inset 0 0 10px rgba(242, 216, 75, 0.28);
+  color: #fef08a;
+  border-color: #eab308;
+  background: #422006;
 }
 
 .ghost-button:disabled,
@@ -540,26 +564,10 @@ h2 {
   border-radius: 50%;
   background: var(--green);
   vertical-align: middle;
-  animation: connection-heartbeat 1.4s ease-in-out infinite;
 }
 
 .connection-status.disconnected {
-  background: #ff4d5f;
-  animation: none;
-}
-
-@keyframes connection-heartbeat {
-  0%,
-  100% {
-    opacity: 0.6;
-    transform: scale(0.9);
-    box-shadow: 0 0 0 1px rgba(34, 240, 138, 0.12);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-    box-shadow: 0 0 0 5px rgba(34, 240, 138, 0);
-  }
+  background: var(--red);
 }
 
 .type-pill {

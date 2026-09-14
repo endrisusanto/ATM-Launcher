@@ -35,7 +35,7 @@ const state = {
 };
 
 function formatStatus(status) {
-  return status === "Error" ? "Cek Log-nya blay" : escapeHtml(status);
+  return status === "Error" ? "Error (Periksa Log)" : escapeHtml(status);
 }
 
 const testcases = [
