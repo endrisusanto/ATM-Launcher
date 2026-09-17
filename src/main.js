@@ -719,24 +719,42 @@ function renderSummary() {
   els.runtimeMetric.textContent = state.summary.runtime;
 }
 
+let ctsDynamicConfig = { available: null, activities: null };
+
+async function fetchCtsDynamicConfig() {
+  try {
+    const config = await invoke("get_cts_verifier_config", { atmRoot: state.atmRoot || null });
+    if (config?.available) ctsDynamicConfig.available = config.available;
+    if (config?.activities) ctsDynamicConfig.activities = config.activities;
+  } catch (err) {
+    console.warn("Failed to fetch dynamic CTS config, falling back to bundled asset JSON:", err);
+  }
+}
+
 function ctsNormalTests() {
-  const available = new Set(ctsAvailable?.CtsVerModule || []);
-  const normalizedActivities = Object.entries(ctsActivities || {}).map(([name, activity]) => ({
+  const activeAvailable = ctsDynamicConfig.available || ctsAvailable?.CtsVerModule || [];
+  const activeActivities = ctsDynamicConfig.activities || ctsActivities || {};
+
+  const available = new Set(activeAvailable);
+  const normalizedActivities = Object.entries(activeActivities).map(([name, activity]) => ({
     name,
     key: name.replace(/\s+/g, "").toLowerCase(),
     activity,
   }));
+
   const preferred = ["DeviceOwnerTestsNormal", "BYODManagedProvisioningNormal"];
-  return preferred
-    .filter((testcase) => available.has(testcase))
+  const matchedPreferred = preferred.filter((testcase) => available.has(testcase));
+  const testList = matchedPreferred.length ? matchedPreferred : Array.from(available);
+
+  return testList
     .map((testcase) => {
       let activity = "";
       if (testcase === "BYODManagedProvisioningNormal") {
-        activity = ctsActivities["BYOD Provisioning tests"];
+        activity = activeActivities["BYOD Provisioning tests"] || activeActivities[testcase];
       } else if (testcase === "DeviceOwnerTestsNormal") {
-        activity = ctsActivities["Device Owner Tests"];
+        activity = activeActivities["Device Owner Tests"] || activeActivities[testcase];
       } else {
-        activity = normalizedActivities.find((item) => item.key === testcase.toLowerCase())?.activity || "";
+        activity = activeActivities[testcase] || normalizedActivities.find((item) => item.key === testcase.toLowerCase())?.activity || "";
       }
       return activity ? { testcase, activity } : null;
     })
@@ -891,10 +909,11 @@ function setCtsActionsDisabled(disabled) {
   // Not used anymore for modal buttons
 }
 
-function loadCtsNormalTests(writeLog = true) {
+async function loadCtsNormalTests(writeLog = true) {
+  await fetchCtsDynamicConfig();
   state.ctsVerifier.tests = ctsNormalTests();
   state.ctsVerifier.selected = new Set(state.ctsVerifier.tests.map((test) => test.testcase));
-  if (writeLog) appendLog(`[cts-verifier] Loaded ${state.ctsVerifier.tests.length} normal testcase(s).`);
+  if (writeLog) appendLog(`[cts-verifier] Loaded ${state.ctsVerifier.tests.length} testcase(s).`);
   renderTests();
 }
 

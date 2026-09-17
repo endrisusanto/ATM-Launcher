@@ -1335,6 +1335,56 @@ fn clear_results(
     Ok(archived)
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct CtsVerifierConfigResponse {
+    available: Option<Vec<String>>,
+    activities: Option<HashMap<String, String>>,
+}
+
+#[tauri::command]
+fn get_cts_verifier_config(
+    app: AppHandle,
+    atm_root: Option<String>,
+) -> Result<CtsVerifierConfigResponse, String> {
+    let root_path = atm_root.as_deref().map(Path::new);
+    let mut response = CtsVerifierConfigResponse {
+        available: None,
+        activities: None,
+    };
+
+    for root in candidate_cts_resource_roots(&app, root_path) {
+        let avail_path = root.join("ListTestCaseAvailable.json");
+        if avail_path.is_file() && response.available.is_none() {
+            if let Ok(content) = std::fs::read_to_string(&avail_path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(arr) = json.get("CtsVerModule").and_then(|v| v.as_array()) {
+                        let list: Vec<String> = arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect();
+                        if !list.is_empty() {
+                            response.available = Some(list);
+                        }
+                    }
+                }
+            }
+        }
+
+        let act_path = root.join("TestCaseToActivity.json");
+        if act_path.is_file() && response.activities.is_none() {
+            if let Ok(content) = std::fs::read_to_string(&act_path) {
+                if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&content) {
+                    if !map.is_empty() {
+                        response.activities = Some(map);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(response)
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -1377,7 +1427,8 @@ fn main() {
             install_cts_verifier,
             start_cts_verifier_activity,
             run_cts_verifier_test,
-            clear_results
+            clear_results,
+            get_cts_verifier_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running ATM Batch Launcher");
