@@ -1652,17 +1652,26 @@ fn resolve_cts_apk_dir(
 
 fn normalize_android_resource_version(release: &str, oneui: &str) -> String {
     let oneui_version = oneui.trim().parse::<u32>().unwrap_or(0);
-    let release = release.trim();
-    if oneui_version >= 80500 {
-        "16.1".to_string()
-    } else if release.starts_with("16") {
-        "16".to_string()
-    } else if release.starts_with("15") {
-        "15".to_string()
-    } else if release.starts_with("14") {
-        "14".to_string()
+    let release_trim = release.trim();
+    let major_str = release_trim.split('.').next().unwrap_or("");
+    let major_num = major_str.parse::<u32>().unwrap_or(0);
+
+    if major_num >= 17 {
+        if oneui_version >= 90500 {
+            format!("{major_num}.1")
+        } else {
+            major_num.to_string()
+        }
+    } else if release_trim.starts_with("16") {
+        if oneui_version >= 80500 {
+            "16.1".to_string()
+        } else {
+            "16".to_string()
+        }
+    } else if !major_str.is_empty() {
+        major_str.to_string()
     } else {
-        release.split('.').next().unwrap_or("15").to_string()
+        "15".to_string()
     }
 }
 
