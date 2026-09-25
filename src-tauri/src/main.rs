@@ -43,11 +43,12 @@ struct RunRequest {
 #[derive(Debug, Clone, Serialize)]
 struct RunFinished {
     exit_code: i32,
+    devices: Vec<String>,
 }
 
 #[derive(Default)]
 struct RunState {
-    active: Mutex<Option<ActiveBatch>>,
+    active_tasks: Mutex<HashMap<String, ActiveBatch>>,
 }
 
 #[derive(Default)]
@@ -58,6 +59,8 @@ struct ScrcpyState {
 
 #[derive(Debug, Clone)]
 struct ActiveBatch {
+    id: String,
+    devices: Vec<String>,
     pid: Option<u32>,
     cancel_file: PathBuf,
 }
@@ -402,28 +405,42 @@ fn run_batch(
     if request.tools.is_empty() {
         return Err("No tools selected".to_string());
     }
+
     {
-        let active = run_state.active.lock().map_err(|err| err.to_string())?;
-        if active.is_some() {
-            return Err("Batch is already running".to_string());
+        let active = run_state.active_tasks.lock().map_err(|err| err.to_string())?;
+        for task in active.values() {
+            for dev in &request.devices {
+                if task.devices.contains(dev) {
+                    return Err(format!("Device {dev} is already running in an active batch"));
+                }
+            }
         }
     }
 
+    let batch_id = format!("batch-{}", unique_millis());
     let cancel_file = root
         .join("atm-batch-launcher")
         .join("runs")
-        .join(format!(".cancel-{}", unique_millis()));
+        .join(format!(".cancel-{batch_id}"));
     if let Some(parent) = cancel_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::remove_file(&cancel_file);
+
+    let active_batch = ActiveBatch {
+        id: batch_id.clone(),
+        devices: request.devices.clone(),
+        pid: None,
+        cancel_file: cancel_file.clone(),
+    };
+
     {
-        let mut active = run_state.active.lock().map_err(|err| err.to_string())?;
-        *active = Some(ActiveBatch {
-            pid: None,
-            cancel_file: cancel_file.clone(),
-        });
+        let mut active = run_state.active_tasks.lock().map_err(|err| err.to_string())?;
+        active.insert(batch_id.clone(), active_batch);
     }
+
+    let task_id = batch_id.clone();
+    let devices_list = request.devices.clone();
 
     thread::spawn(move || {
         let java_file = root
@@ -450,7 +467,7 @@ fn run_batch(
                 let _ = app.emit("atm-run-log", format!("[launcher] Patch warning: {err}"));
             }
         }
-        let devices = request.devices.join(",");
+        let devices_str = devices_list.join(",");
         let tools = request.tools.join(",");
         let concurrency = request.concurrency.unwrap_or(1).max(1).to_string();
         let mut args = vec![
@@ -459,7 +476,7 @@ fn run_batch(
             "--tools".to_string(),
             tools,
             "--devices".to_string(),
-            devices,
+            devices_str,
             "--concurrency".to_string(),
             concurrency,
             "--cancel-file".to_string(),
@@ -505,15 +522,16 @@ fn run_batch(
                     format!("[launcher] Failed to start batch: {err}"),
                 );
                 let state = app.state::<RunState>();
-                if let Ok(mut active) = state.active.lock() {
-                    if active
-                        .as_ref()
-                        .is_some_and(|batch| batch.cancel_file == cancel_file)
-                    {
-                        *active = None;
-                    }
+                if let Ok(mut active) = state.active_tasks.lock() {
+                    active.remove(&task_id);
                 }
-                let _ = app.emit("atm-run-finished", RunFinished { exit_code: 1 });
+                let _ = app.emit(
+                    "atm-run-finished",
+                    RunFinished {
+                        exit_code: 1,
+                        devices: devices_list,
+                    },
+                );
                 return;
             }
         };
@@ -523,11 +541,8 @@ fn run_batch(
             format!("[launcher] Batch process started pid={child_id}"),
         );
         let state = app.state::<RunState>();
-        if let Ok(mut active) = state.active.lock() {
-            if let Some(batch) = active
-                .as_mut()
-                .filter(|batch| batch.cancel_file == cancel_file)
-            {
+        if let Ok(mut active) = state.active_tasks.lock() {
+            if let Some(batch) = active.get_mut(&task_id) {
                 batch.pid = Some(child_id);
             }
         }
@@ -550,17 +565,17 @@ fn run_batch(
         }
 
         let exit_code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
-        let mut should_emit_finished = true;
         let _ = std::fs::remove_file(&cancel_file);
-        if let Ok(mut active) = state.active.lock() {
-            match active.as_ref() {
-                Some(batch) if batch.cancel_file == cancel_file => *active = None,
-                _ => should_emit_finished = false,
-            }
+        if let Ok(mut active) = state.active_tasks.lock() {
+            active.remove(&task_id);
         }
-        if should_emit_finished {
-            let _ = app.emit("atm-run-finished", RunFinished { exit_code });
-        }
+        let _ = app.emit(
+            "atm-run-finished",
+            RunFinished {
+                exit_code,
+                devices: devices_list,
+            },
+        );
     });
 
     Ok(())
@@ -736,46 +751,46 @@ fn ensure_batch_launcher_compat(root: &Path) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn cancel_batch(app: AppHandle, run_state: State<'_, RunState>) -> Result<(), String> {
-    let active = {
-        let active = run_state.active.lock().map_err(|err| err.to_string())?;
-        active.clone()
+    let tasks_to_cancel: Vec<ActiveBatch> = {
+        let active_tasks = run_state.active_tasks.lock().map_err(|err| err.to_string())?;
+        active_tasks.values().cloned().collect()
     };
-    let Some(active) = active else {
-        let _ = app.emit(
-            "atm-run-log",
-            "[launcher] No active batch process to cancel.",
-        );
-        return Ok(());
-    };
-    let pid = active.pid;
 
-    let message = match pid {
-        Some(pid) => format!("[launcher] Cancelling batch pid={pid}; waiting for cleanup..."),
-        None => "[launcher] Cancelling pending batch; waiting for cleanup...".to_string(),
-    };
-    let _ = app.emit("atm-run-log", message);
-    std::fs::write(&active.cancel_file, b"cancel").map_err(|err| err.to_string())?;
-    let app_watchdog = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(8));
-        let Some(pid) = pid else {
-            return;
+    if tasks_to_cancel.is_empty() {
+        let _ = app.emit("atm-run-log", "[launcher] No active batch process to cancel.");
+        return Ok(());
+    }
+
+    for active in tasks_to_cancel {
+        let pid = active.pid;
+        let message = match pid {
+            Some(pid) => format!("[launcher] Cancelling batch pid={pid} for devices={}; waiting for cleanup...", active.devices.join(",")),
+            None => format!("[launcher] Cancelling pending batch for devices={}; waiting for cleanup...", active.devices.join(",")),
         };
-        let state = app_watchdog.state::<RunState>();
-        let still_active = state
-            .active
-            .lock()
-            .ok()
-            .and_then(|active| active.as_ref().map(|batch| batch.pid == Some(pid)))
-            .unwrap_or(false);
-        if still_active {
-            let _ = app_watchdog.emit(
-                "atm-run-log",
-                format!("[launcher] Cancel cleanup timeout; force-killing pid={pid}..."),
-            );
-            terminate_process_tree(pid);
-        }
-    });
+        let _ = app.emit("atm-run-log", message);
+        let _ = std::fs::write(&active.cancel_file, b"cancel");
+        let app_watchdog = app.clone();
+        let task_id = active.id.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(8));
+            let Some(pid) = pid else { return; };
+            let state = app_watchdog.state::<RunState>();
+            let still_active = state
+                .active_tasks
+                .lock()
+                .ok()
+                .and_then(|map| map.get(&task_id).map(|b| b.pid == Some(pid)))
+                .unwrap_or(false);
+            if still_active {
+                let _ = app_watchdog.emit(
+                    "atm-run-log",
+                    format!("[launcher] Cancel cleanup timeout; force-killing pid={pid}..."),
+                );
+                terminate_process_tree(pid);
+            }
+        });
+    }
+
     Ok(())
 }
 

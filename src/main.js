@@ -9,9 +9,12 @@ import ctsActivities from "./assets/cts-verifier/TestCaseToActivity.json";
 const state = {
   devices: [],
   selected: new Set(),
+  runningDevices: new Set(),
   tools: ["getprop", "bvt", "svt", "sdt"],
   concurrency: 1,
-  running: false,
+  get running() {
+    return this.runningDevices.size > 0;
+  },
   loadedDevices: false,
   atmRoot: localStorage.getItem("atmRoot") || "",
   logLines: [],
@@ -455,25 +458,43 @@ listen("atm-run-log", (event) => {
   collectResultFromLine(line);
 });
 
-function finishBatch(exitCode) {
-  state.running = false;
-  els.runBtn.disabled = false;
-  els.cancelBtn.disabled = true;
+function idleSelectedDevices() {
+  return selectedDevices().filter((d) => !state.runningDevices.has(d.serial));
+}
+
+function finishBatch(exitCode, finishedSerials = []) {
+  const serialsToFinish = finishedSerials.length > 0 ? finishedSerials : Array.from(state.runningDevices);
+  serialsToFinish.forEach((serial) => state.runningDevices.delete(serial));
+
   if (exitCode === 130) {
-    markRunningAs("Cancelled");
-    els.statusLine.textContent = "Cancelled";
-  } else {
-    els.statusLine.textContent = exitCode === 0 ? "Completed" : "Testnya udah selesai tapi ada beberapa catatan";
+    serialsToFinish.forEach((serial) => {
+      state.results.forEach((result, key) => {
+        if (key.startsWith(`${serial}:`) && (result.status === "Running" || result.status === "Executing")) {
+          state.results.set(key, { ...result, status: "Cancelled", time: result.startedAt ? formatDuration(Date.now() - result.startedAt) : result.time });
+        }
+      });
+    });
   }
+
+  if (state.runningDevices.size === 0) {
+    els.cancelBtn.disabled = true;
+    if (exitCode === 130) {
+      els.statusLine.textContent = "Cancelled";
+    } else {
+      els.statusLine.textContent = exitCode === 0 ? "Completed" : "Testnya udah selesai tapi ada beberapa catatan";
+    }
+    if (exitCode !== 130) startDollarConfetti();
+  }
+
   renderSummary();
   renderTests();
   updateRunButton();
-  if (exitCode !== 130) startDollarConfetti();
 }
 
 listen("atm-run-finished", (event) => {
   const exitCode = Number(event.payload?.exit_code || 0);
-  finishBatch(exitCode);
+  const finishedDevices = event.payload?.devices || Array.from(state.runningDevices);
+  finishBatch(exitCode, finishedDevices);
 });
 
 function render() {
@@ -485,16 +506,24 @@ function render() {
 }
 
 function updateRunButton() {
-  const count = state.selected.size;
+  const selectedCount = state.selected.size;
+  const idleSelected = idleSelectedDevices();
   const testcaseCount = selectedTestcases().length;
+  const runningCount = state.runningDevices.size;
 
-  if (els.concurrencyInput && !state.running) {
-    els.concurrencyInput.value = count > 0 ? count : 1;
-    state.concurrency = Math.max(1, count);
+  if (els.concurrencyInput && runningCount === 0) {
+    els.concurrencyInput.value = selectedCount > 0 ? selectedCount : 1;
+    state.concurrency = Math.max(1, selectedCount);
   }
 
-  els.runBtn.textContent = `Run Selected (${count})`;
-  els.runBtn.disabled = state.running || count === 0 || testcaseCount === 0;
+  const idleCount = idleSelected.length;
+  if (runningCount > 0 && idleCount > 0) {
+    els.runBtn.textContent = `Run Selected (+${idleCount} New)`;
+  } else {
+    els.runBtn.textContent = `Run Selected (${selectedCount})`;
+  }
+  els.runBtn.disabled = idleCount === 0 || testcaseCount === 0;
+  els.cancelBtn.disabled = runningCount === 0;
   els.allTools.checked = state.tools.length === testcases.length;
   updateSelectToggle();
 }
@@ -1070,36 +1099,32 @@ async function openScrcpyWrap(serial) {
 }
 
 async function runBatch() {
-  if (state.running) return;
-
-  const devices = selectedDevices().map((d) => d.serial);
+  const idleDevices = idleSelectedDevices().map((d) => d.serial);
   const tools = selectedTestcases().map((testcase) => testcase.tool);
-  if (!devices.length || !tools.length) return;
+  if (!idleDevices.length || !tools.length) return;
 
-  state.running = true;
-  els.runBtn.disabled = true;
+  idleDevices.forEach((serial) => state.runningDevices.add(serial));
+  updateRunButton();
 
   stopDollarConfetti();
 
   try {
-    const archived = await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: devices, tools });
+    const archived = await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: idleDevices, tools });
     if (archived?.length) {
       archived.forEach((item) => appendLog(`[launcher] Archived previous results: ${item}`));
-    } else {
-      appendLog("[launcher] No previous result folders found; starting with fresh result folders.");
     }
   } catch (err) {
     appendLog(`[launcher] Warning: Failed to prepare result folders: ${err}`);
   }
 
-  const javaTools = tools.filter(t => t !== "cts_verifier");
+  const javaTools = tools.filter((t) => t !== "cts_verifier");
   const runCts = tools.includes("cts_verifier");
 
-  state.runStartedAt = Date.now();
-  state.results.clear();
-  state.pendingJavaAfterCts = null;
+  if (!state.runStartedAt) {
+    state.runStartedAt = Date.now();
+  }
 
-  devices.forEach((serial) => {
+  idleDevices.forEach((serial) => {
     tools.forEach((tool, index) => {
       if (index === 0) {
         state.results.set(`${serial}:${tool}`, { status: "Running", time: "00:00:00", startedAt: Date.now() });
@@ -1108,22 +1133,24 @@ async function runBatch() {
       }
     });
   });
+
   els.cancelBtn.disabled = false;
   els.statusLine.textContent = "Running";
-  appendLog(`[launcher] Starting batch: devices=${devices.join(", ")} tools=${tools.join(", ")}`);
+  appendLog(`[launcher] Starting batch: devices=${idleDevices.join(", ")} tools=${tools.join(", ")}`);
   render();
+
   try {
     if (runCts && javaTools.length > 0) {
-      state.pendingJavaAfterCts = javaTools;
-      appendLog("[cts-verifier] Starting CTS Verifier sequence (Java tools queued after)...");
+      state.pendingJavaAfterCts = { devices: idleDevices, javaTools };
+      appendLog(`[cts-verifier] Starting CTS Verifier sequence for ${idleDevices.join(", ")}...`);
       runCtsVerifierSequence();
     } else if (runCts) {
-      appendLog("[cts-verifier] Starting CTS Verifier sequence...");
+      appendLog(`[cts-verifier] Starting CTS Verifier sequence for ${idleDevices.join(", ")}...`);
       runCtsVerifierSequence();
     } else if (javaTools.length > 0) {
       await invoke("run_batch", {
         request: {
-          devices,
+          devices: idleDevices,
           tools: javaTools,
           concurrency: parseInt(els.concurrencyInput?.value || "1", 10),
           update: false,
@@ -1133,7 +1160,7 @@ async function runBatch() {
     }
   } catch (error) {
     appendLog(`[launcher] Run failed: ${error}`);
-    finishBatch(1);
+    finishBatch(1, idleDevices);
   }
   render();
 }
