@@ -10,6 +10,7 @@ const state = {
   devices: [],
   selected: new Set(),
   runningDevices: new Set(),
+  deviceTools: new Map(),
   tools: ["getprop", "bvt", "svt", "sdt"],
   concurrency: 1,
   get running() {
@@ -36,6 +37,28 @@ const state = {
   pendingJavaAfterCts: null,
   lampStates: new Map(),
 };
+
+function getToolsForDevice(serial) {
+  if (!state.deviceTools.has(serial)) {
+    state.deviceTools.set(serial, new Set(state.tools));
+  }
+  return state.deviceTools.get(serial);
+}
+
+function selectedTestcasesForDevice(serial) {
+  const deviceToolSet = getToolsForDevice(serial);
+  return testcases.filter((testcase) => deviceToolSet.has(testcase.tool));
+}
+
+function toggleToolForDevice(serial, tool) {
+  if (state.runningDevices.has(serial)) return; // Locked while running!
+  const toolSet = getToolsForDevice(serial);
+  if (toolSet.has(tool)) {
+    toolSet.delete(tool);
+  } else {
+    toolSet.add(tool);
+  }
+}
 
 function formatStatus(status) {
   return status === "Error" ? "Error (Periksa Log)" : escapeHtml(status);
@@ -405,15 +428,44 @@ els.clearLogBtn.addEventListener("click", () => {
   renderLog();
 });
 els.allTools.addEventListener("change", () => {
-  state.tools = els.allTools.checked ? allToolIds() : [];
+  const shouldCheck = els.allTools.checked;
+  idleSelectedDevices().forEach((device) => {
+    const toolSet = getToolsForDevice(device.serial);
+    toolSet.clear();
+    if (shouldCheck) {
+      testcases.forEach((tc) => toolSet.add(tc.tool));
+    }
+  });
+  state.tools = shouldCheck ? allToolIds() : [];
   els.onlyFailed.checked = false;
   renderTests();
   updateRunButton();
 });
 els.onlyFailed.addEventListener("change", () => {
-  if (els.onlyFailed.checked) {
-    state.tools = failedToolIds();
-    els.allTools.checked = state.tools.length === testcases.length;
+  const shouldCheckFailed = els.onlyFailed.checked;
+  if (shouldCheckFailed) {
+    idleSelectedDevices().forEach((device) => {
+      const failedTools = testcases.filter((tc) => {
+        const st = state.results.get(`${device.serial}:${tc.tool}`)?.status;
+        return st === "Failed" || st === "Error";
+      }).map((tc) => tc.tool);
+
+      const toolSet = getToolsForDevice(device.serial);
+      toolSet.clear();
+      if (failedTools.length) {
+        failedTools.forEach((t) => toolSet.add(t));
+      } else {
+        failedToolIds().forEach((t) => toolSet.add(t));
+      }
+    });
+  } else {
+    // Unchecking "Failed" deselects failed-only filter and restores all tools for idle selected devices!
+    idleSelectedDevices().forEach((device) => {
+      const toolSet = getToolsForDevice(device.serial);
+      toolSet.clear();
+      testcases.forEach((tc) => toolSet.add(tc.tool));
+    });
+    state.tools = allToolIds();
   }
   renderTests();
   updateRunButton();
@@ -466,15 +518,15 @@ function finishBatch(exitCode, finishedSerials = []) {
   const serialsToFinish = finishedSerials.length > 0 ? finishedSerials : Array.from(state.runningDevices);
   serialsToFinish.forEach((serial) => state.runningDevices.delete(serial));
 
-  if (exitCode === 130) {
-    serialsToFinish.forEach((serial) => {
-      state.results.forEach((result, key) => {
-        if (key.startsWith(`${serial}:`) && (result.status === "Running" || result.status === "Executing")) {
-          state.results.set(key, { ...result, status: "Cancelled", time: result.startedAt ? formatDuration(Date.now() - result.startedAt) : result.time });
-        }
-      });
+  serialsToFinish.forEach((serial) => {
+    state.results.forEach((result, key) => {
+      if (key.startsWith(`${serial}:`) && (result.status === "Running" || result.status === "Executing")) {
+        const status = exitCode === 130 ? "Cancelled" : "Standby";
+        const time = exitCode === 130 ? (result.startedAt ? formatDuration(Date.now() - result.startedAt) : result.time) : "-";
+        state.results.set(key, { ...result, status, time });
+      }
     });
-  }
+  });
 
   if (state.runningDevices.size === 0) {
     els.cancelBtn.disabled = true;
@@ -508,7 +560,6 @@ function render() {
 function updateRunButton() {
   const selectedCount = state.selected.size;
   const idleSelected = idleSelectedDevices();
-  const testcaseCount = selectedTestcases().length;
   const runningCount = state.runningDevices.size;
 
   if (els.concurrencyInput && runningCount === 0) {
@@ -517,14 +568,18 @@ function updateRunButton() {
   }
 
   const idleCount = idleSelected.length;
+  const hasTestcases = idleSelected.some((device) => selectedTestcasesForDevice(device.serial).length > 0);
+
   if (runningCount > 0 && idleCount > 0) {
     els.runBtn.textContent = `Run Selected (+${idleCount} New)`;
   } else {
     els.runBtn.textContent = `Run Selected (${selectedCount})`;
   }
-  els.runBtn.disabled = idleCount === 0 || testcaseCount === 0;
+  els.runBtn.disabled = idleCount === 0 || !hasTestcases;
   els.cancelBtn.disabled = runningCount === 0;
-  els.allTools.checked = state.tools.length === testcases.length;
+
+  const allChecked = idleSelected.length > 0 && idleSelected.every((device) => selectedTestcasesForDevice(device.serial).length === testcases.length);
+  els.allTools.checked = allChecked;
   updateSelectToggle();
 }
 
@@ -662,16 +717,19 @@ function renderTests() {
     [...els.testArea.querySelectorAll(".subtest-scroll")].map((element) => [element.dataset.scrollKey, element.scrollLeft]),
   );
   const devices = selectedDevices();
-  // ponytail: hide test table when no device selected
   if (!devices.length) {
     els.testArea.innerHTML = `<div class="empty large">Select device untuk menampilkan test workspace</div>`;
     return;
   }
   els.testArea.innerHTML = devices.map((device) => {
+    const isDeviceRunning = state.runningDevices.has(device.serial);
+    const deviceSelectedTools = selectedTestcasesForDevice(device.serial);
+    const deviceToolSet = getToolsForDevice(device.serial);
+    const hasAnyChecked = deviceSelectedTools.length > 0;
     const rows = testcases.map((testcase) => {
       const key = `${device.serial}:${testcase.tool}`;
       const result = state.results.get(key) || { status: "Standby", time: "-" };
-      const checked = state.tools.includes(testcase.tool);
+      const checked = deviceToolSet.has(testcase.tool);
       const progress = progressForStatus(result.status);
       const isRunning = result.status === "Executing" || result.status === "Running";
       const displayTime = isRunning && result.startedAt
@@ -685,7 +743,11 @@ function renderTests() {
       }
       return `
         <tr class="${checked ? "checked" : ""}" data-tool="${testcase.tool}">
-          <td><button class="row-check ${checked ? "checked" : ""}" data-tool="${testcase.tool}" title="Select testcase">${checked ? "✓" : ""}</button></td>
+          <td>
+            <button class="row-check ${checked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" data-tool="${testcase.tool}" title="${isDeviceRunning ? "Running (locked)" : "Select testcase"}" ${isDeviceRunning ? "disabled" : ""}>
+              ${checked ? "✓" : ""}
+            </button>
+          </td>
           <td>
             <span class="test-name">${escapeHtml(testcase.name)}</span>
             <small>${escapeHtml(testcase.description)}</small>
@@ -698,16 +760,31 @@ function renderTests() {
       `;
     }).join("");
     return `
-      <article class="test-card">
+      <article class="test-card ${isDeviceRunning ? "running" : ""}">
         <header>
           <div>
-            <h3>${escapeHtml(device.model || "Unknown")}</h3>
+            <h3>${escapeHtml(device.model || "Unknown")} ${isDeviceRunning ? `<small style="color:var(--cyan); font-weight:normal;">[Running]</small>` : ""}</h3>
             <p>${escapeHtml(device.serial)} · Android ${escapeHtml(device.android || "-")}</p>
           </div>
-          <span>${selectedTestcases().length}/${testcases.length} checked</span>
+          <span>${deviceSelectedTools.length}/${testcases.length} checked</span>
         </header>
         <table>
-          <thead><tr><th>Select</th><th>Testcase</th><th>Status</th><th>Sub Testcases</th><th>Time</th></tr></thead>
+          <thead>
+            <tr>
+              <th>
+                <div class="th-select">
+                  <button class="head-check-btn ${hasAnyChecked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" title="${isDeviceRunning ? "Running (locked)" : hasAnyChecked ? "Uncheck all testcases for this device" : "Select all testcases for this device"}" ${isDeviceRunning ? "disabled" : ""}>
+                    ${hasAnyChecked ? "✓" : ""}
+                  </button>
+                  <span>${hasAnyChecked ? "Uncheck" : "Select"}</span>
+                </div>
+              </th>
+              <th>Testcase</th>
+              <th>Status</th>
+              <th>Sub Testcases</th>
+              <th>Time</th>
+            </tr>
+          </thead>
           <tbody>${rows}</tbody>
         </table>
       </article>
@@ -716,9 +793,26 @@ function renderTests() {
   els.testArea.querySelectorAll(".subtest-scroll").forEach((element) => {
     element.scrollLeft = subtestScrolls.get(element.dataset.scrollKey) || 0;
   });
+  els.testArea.querySelectorAll(".head-check-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const serial = button.dataset.serial;
+      if (state.runningDevices.has(serial)) return;
+      const toolSet = getToolsForDevice(serial);
+      if (toolSet.size > 0) {
+        toolSet.clear();
+      } else {
+        testcases.forEach((tc) => toolSet.add(tc.tool));
+      }
+      els.onlyFailed.checked = false;
+      renderTests();
+      updateRunButton();
+    });
+  });
   els.testArea.querySelectorAll(".row-check").forEach((button) => {
     button.addEventListener("click", () => {
-      toggleTool(button.dataset.tool);
+      const serial = button.dataset.serial;
+      const tool = button.dataset.tool;
+      toggleToolForDevice(serial, tool);
       els.onlyFailed.checked = false;
       renderTests();
       updateRunButton();
@@ -1099,68 +1193,83 @@ async function openScrcpyWrap(serial) {
 }
 
 async function runBatch() {
-  const idleDevices = idleSelectedDevices().map((d) => d.serial);
-  const tools = selectedTestcases().map((testcase) => testcase.tool);
-  if (!idleDevices.length || !tools.length) return;
+  const idleDevices = idleSelectedDevices();
+  if (!idleDevices.length) return;
 
-  idleDevices.forEach((serial) => state.runningDevices.add(serial));
-  updateRunButton();
+  const deviceToolGroups = new Map();
+  idleDevices.forEach((device) => {
+    const tools = selectedTestcasesForDevice(device.serial).map((tc) => tc.tool);
+    if (!tools.length) return;
+    const groupKey = tools.join(",");
+    if (!deviceToolGroups.has(groupKey)) {
+      deviceToolGroups.set(groupKey, { tools, serials: [] });
+    }
+    deviceToolGroups.get(groupKey).serials.push(device.serial);
+  });
+
+  if (!deviceToolGroups.size) return;
 
   stopDollarConfetti();
-
-  try {
-    const archived = await invoke("clear_results", { atmRoot: state.atmRoot || null, serials: idleDevices, tools });
-    if (archived?.length) {
-      archived.forEach((item) => appendLog(`[launcher] Archived previous results: ${item}`));
-    }
-  } catch (err) {
-    appendLog(`[launcher] Warning: Failed to prepare result folders: ${err}`);
-  }
-
-  const javaTools = tools.filter((t) => t !== "cts_verifier");
-  const runCts = tools.includes("cts_verifier");
 
   if (!state.runStartedAt) {
     state.runStartedAt = Date.now();
   }
 
-  idleDevices.forEach((serial) => {
-    tools.forEach((tool, index) => {
-      if (index === 0) {
-        state.results.set(`${serial}:${tool}`, { status: "Running", time: "00:00:00", startedAt: Date.now() });
-      } else {
-        state.results.set(`${serial}:${tool}`, { status: "Standby", time: "-" });
+  for (const { tools, serials } of deviceToolGroups.values()) {
+    serials.forEach((serial) => state.runningDevices.add(serial));
+    updateRunButton();
+
+    try {
+      const archived = await invoke("clear_results", { atmRoot: state.atmRoot || null, serials, tools });
+      if (archived?.length) {
+        archived.forEach((item) => appendLog(`[launcher] Archived previous results: ${item}`));
       }
-    });
-  });
-
-  els.cancelBtn.disabled = false;
-  els.statusLine.textContent = "Running";
-  appendLog(`[launcher] Starting batch: devices=${idleDevices.join(", ")} tools=${tools.join(", ")}`);
-  render();
-
-  try {
-    if (runCts && javaTools.length > 0) {
-      state.pendingJavaAfterCts = { devices: idleDevices, javaTools };
-      appendLog(`[cts-verifier] Starting CTS Verifier sequence for ${idleDevices.join(", ")}...`);
-      runCtsVerifierSequence();
-    } else if (runCts) {
-      appendLog(`[cts-verifier] Starting CTS Verifier sequence for ${idleDevices.join(", ")}...`);
-      runCtsVerifierSequence();
-    } else if (javaTools.length > 0) {
-      await invoke("run_batch", {
-        request: {
-          devices: idleDevices,
-          tools: javaTools,
-          concurrency: parseInt(els.concurrencyInput?.value || "1", 10),
-          update: false,
-          atm_root: state.atmRoot || null,
-        },
-      });
+    } catch (err) {
+      appendLog(`[launcher] Warning: Failed to prepare result folders: ${err}`);
     }
-  } catch (error) {
-    appendLog(`[launcher] Run failed: ${error}`);
-    finishBatch(1, idleDevices);
+
+    const javaTools = tools.filter((t) => t !== "cts_verifier");
+    const runCts = tools.includes("cts_verifier");
+
+    serials.forEach((serial) => {
+      testcases.forEach((tc) => {
+        state.results.set(`${serial}:${tc.tool}`, { status: "Standby", time: "-" });
+      });
+      tools.forEach((tool, index) => {
+        if (index === 0) {
+          state.results.set(`${serial}:${tool}`, { status: "Running", time: "00:00:00", startedAt: Date.now() });
+        }
+      });
+    });
+
+    els.cancelBtn.disabled = false;
+    els.statusLine.textContent = "Running";
+    appendLog(`[launcher] Starting batch: devices=${serials.join(", ")} tools=${tools.join(", ")}`);
+    render();
+
+    try {
+      if (runCts && javaTools.length > 0) {
+        state.pendingJavaAfterCts = { devices: serials, javaTools };
+        appendLog(`[cts-verifier] Starting CTS Verifier sequence for ${serials.join(", ")}...`);
+        runCtsVerifierSequence();
+      } else if (runCts) {
+        appendLog(`[cts-verifier] Starting CTS Verifier sequence for ${serials.join(", ")}...`);
+        runCtsVerifierSequence();
+      } else if (javaTools.length > 0) {
+        await invoke("run_batch", {
+          request: {
+            devices: serials,
+            tools: javaTools,
+            concurrency: parseInt(els.concurrencyInput?.value || "1", 10),
+            update: false,
+            atm_root: state.atmRoot || null,
+          },
+        });
+      }
+    } catch (error) {
+      appendLog(`[launcher] Run failed for ${serials.join(", ")}: ${error}`);
+      finishBatch(1, serials);
+    }
   }
   render();
 }
@@ -1360,25 +1469,12 @@ function collectResultFromLine(line) {
     subtests.summary = parseBvtSummaryFromEndLine(line);
   }
   state.results.set(`${serial}:${tool}`, { status, time: formatDuration(elapsed), subtests });
-  markNextToolRunning(serial, tool);
   renderSummary();
   render();
 }
 
 function selectedRunKeys() {
-  return selectedDevices().flatMap((device) => selectedTestcases().map((testcase) => `${device.serial}:${testcase.tool}`));
-}
-
-function markNextToolRunning(serial, completedTool) {
-  const tools = selectedTestcases().map((testcase) => testcase.tool);
-  const index = tools.indexOf(completedTool);
-  const nextTool = index >= 0 ? tools[index + 1] : null;
-  if (!nextTool) return;
-  const key = `${serial}:${nextTool}`;
-  const current = state.results.get(key);
-  if (!current || current.status === "Standby") {
-    state.results.set(key, { status: "Running", time: "00:00:00", startedAt: Date.now() });
-  }
+  return selectedDevices().flatMap((device) => selectedTestcasesForDevice(device.serial).map((testcase) => `${device.serial}:${testcase.tool}`));
 }
 
 function normalizeToolStatus(status) {
@@ -1415,7 +1511,7 @@ function statusClass(status) {
 }
 
 function deviceProgress(serial) {
-  const selected = selectedTestcases();
+  const selected = selectedTestcasesForDevice(serial);
   if (!selected.length) return { percent: 0, status: "Standby", label: "Standby" };
   const statuses = selected.map((testcase) => state.results.get(`${serial}:${testcase.tool}`)?.status || "Standby");
   const done = statuses.filter((status) => terminalStatuses.includes(status) || status === "Cancelled").length;
