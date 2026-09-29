@@ -267,16 +267,16 @@ app.innerHTML = `
       <div class="brand">
         <img class="brand-mark" src="${atmLogo}" alt="ATM" />
         <div>
-          <h1>ATM Bersama</h1>
-          <p>Sequence runner for ATM test tools. Bukan buat narik duit ya!!!</p>
+          <h1>ATM BERSAMA HUB</h1>
+          <p>Automated Device Test Orchestration Engine</p>
         </div>
       </div>
-      <button class="icon-button" id="preflightBtn" title="Settings">⚙</button>
+      <button class="icon-button" id="preflightBtn" title="System Settings">⚙</button>
     </header>
 
     <aside class="devices-pane">
       <div class="pane-head">
-        <h2>DEVICES</h2>
+        <h2>CONNECTED DEVICES</h2>
         <div class="pane-actions">
           <button class="mini-button" id="unselectBtn">Unselect</button>
           <button class="mini-button" id="refreshBtn">Refresh</button>
@@ -301,12 +301,12 @@ app.innerHTML = `
 
     <aside class="summary-pane">
       <section class="summary">
-        <h2>SUMMARIZE</h2>
+        <h2>EXECUTION METRICS</h2>
         <div class="metric-row"><span>Executed:</span><strong id="executedMetric">0</strong></div>
-        <div class="metric-row"><span>Started, not have result:</span><strong id="pendingMetric">0</strong></div>
+        <div class="metric-row"><span>Executing / Pending:</span><strong id="pendingMetric">0</strong></div>
         <div class="metric-row"><span>Pass:</span><strong class="pass" id="passMetric">0</strong></div>
         <div class="metric-row"><span>Fail:</span><strong class="fail" id="failMetric">0</strong></div>
-        <div class="metric-row"><span>Total runtime:</span><strong id="runtimeMetric">00:00:00</strong></div>
+        <div class="metric-row"><span>Total Runtime:</span><strong id="runtimeMetric">00:00:00</strong></div>
       </section>
       <section class="running-log">
         <div class="log-head">
@@ -315,20 +315,20 @@ app.innerHTML = `
         </div>
         <pre id="logBox"></pre>
       </section>
-      <footer class="status-line" id="statusLine">Standby</footer>
+      <footer class="status-line" id="statusLine">Ready</footer>
     </aside>
 
     <div class="modal-backdrop hidden" id="settingsModal">
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <header>
           <div>
-            <h2 id="settingsTitle">SETTINGS</h2>
-            <p>ATM root path dan preflight check</p>
+            <h2 id="settingsTitle">SYSTEM CONFIGURATION</h2>
+            <p>ATM Root path configuration and environment preflight check</p>
           </div>
           <button class="icon-button" id="settingsCloseBtn" title="Close">×</button>
         </header>
         <label class="path-field">
-          <span>ATM Path</span>
+          <span>ATM Root Path</span>
           <div class="path-row">
             <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" />
             <button id="browseBtn" class="ghost-button">Browse</button>
@@ -337,8 +337,8 @@ app.innerHTML = `
         <div class="settings-actions">
           <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
           <button class="ghost-button" id="updateToolsBtn">Update Tools</button>
-          <button class="ghost-button" id="settingsCheckBtn">Check</button>
-          <button class="run-button" id="settingsSaveBtn">Save</button>
+          <button class="ghost-button" id="settingsCheckBtn">Run Preflight</button>
+          <button class="run-button" id="settingsSaveBtn">Save Configuration</button>
         </div>
         <pre class="settings-output" id="settingsOutput"></pre>
       </section>
@@ -533,7 +533,7 @@ function finishBatch(exitCode, finishedSerials = []) {
     if (exitCode === 130) {
       els.statusLine.textContent = "Cancelled";
     } else {
-      els.statusLine.textContent = exitCode === 0 ? "Completed" : "Testnya udah selesai tapi ada beberapa catatan";
+      els.statusLine.textContent = exitCode === 0 ? "Completed" : "Completed with warnings";
     }
     if (exitCode !== 130) startDollarConfetti();
   }
@@ -1529,7 +1529,7 @@ function deviceProgress(serial) {
 }
 
 function deviceProgressLabel(status) {
-  return status === "Error" ? "Testnya udah selesai dengan beberapa catatan" : status;
+  return status === "Error" ? "Completed with warnings" : status;
 }
 
 function formatDuration(ms) {
