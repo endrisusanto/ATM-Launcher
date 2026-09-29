@@ -113,7 +113,13 @@ fn preflight(atm_root: Option<String>) -> Result<Vec<String>, String> {
 #[tauri::command]
 async fn list_devices() -> Result<Vec<DeviceInfo>, String> {
     let adb = adb_path();
-    let output = run_output_with_timeout(Command::new(&adb).args(["devices", "-l"]), Duration::from_secs(6))?;
+    let output = match run_output_with_timeout(Command::new(&adb).args(["devices", "-l"]), Duration::from_secs(10)) {
+        Ok(out) => out,
+        Err(err) => {
+            run_output_with_timeout(Command::new(&adb).args(["devices", "-l"]), Duration::from_secs(4))
+                .map_err(|_| format!("ADB Timeout: {err}"))?
+        }
+    };
     let mut raw_devices = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
@@ -1588,7 +1594,7 @@ fn java_bin() -> String {
 }
 
 fn adb_props(adb: &str, serial: &str) -> Result<HashMap<String, String>, String> {
-    let output = run_output_with_timeout(Command::new(adb).args(["-s", serial, "shell", "getprop"]), Duration::from_secs(6))?;
+    let output = run_output_with_timeout(Command::new(adb).args(["-s", serial, "shell", "getprop"]), Duration::from_secs(3))?;
     let mut props = HashMap::new();
     for line in output.lines() {
         if let Some((key, value)) = parse_getprop_line(line) {
