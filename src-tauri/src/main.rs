@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -51,25 +51,12 @@ struct RunState {
     active_tasks: Mutex<HashMap<String, ActiveBatch>>,
 }
 
-#[derive(Default)]
-struct ScrcpyState {
-    devices: Mutex<HashSet<String>>,
-    metadata_cache: Mutex<HashMap<String, (Instant, ScrcpyDeviceMetadata)>>,
-}
-
 #[derive(Debug, Clone)]
 struct ActiveBatch {
     id: String,
     devices: Vec<String>,
     pid: Option<u32>,
     cancel_file: PathBuf,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ScrcpyDeviceMetadata {
-    serial: String,
-    model: String,
-    battery_level: String,
 }
 
 fn configured_timeout_secs(env_name: &str, default_secs: u64) -> u64 {
@@ -213,170 +200,6 @@ async fn list_devices() -> Result<Vec<DeviceInfo>, String> {
     }
 
     Ok(devices)
-}
-
-#[tauri::command]
-fn open_scrcpy_wrap(
-    app: AppHandle,
-    scrcpy_state: State<'_, ScrcpyState>,
-    serial: String,
-) -> Result<(), String> {
-    let serial = serial.trim().to_string();
-    if serial.is_empty() {
-        return Err("Serial is empty".to_string());
-    }
-
-    {
-        let mut devices = scrcpy_state.devices.lock().map_err(|err| err.to_string())?;
-        devices.insert(serial.clone());
-    }
-    ensure_scrcpy_wrap_window(&app)?;
-    let _ = app.emit("scrcpy-wrap-updated", serial.clone());
-    let app_delayed = app.clone();
-    thread::spawn(move || {
-        for delay in [180_u64, 700_u64] {
-            thread::sleep(Duration::from_millis(delay));
-            let _ = app_delayed.emit("scrcpy-wrap-updated", serial.clone());
-        }
-    });
-    Ok(())
-}
-
-#[tauri::command]
-async fn get_scrcpy_wrap_devices(
-    scrcpy_state: State<'_, ScrcpyState>,
-) -> Result<Vec<ScrcpyDeviceMetadata>, String> {
-    let serials = scrcpy_state
-        .devices
-        .lock()
-        .map_err(|err| err.to_string())?
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    let now = Instant::now();
-    let cached = {
-        let cache = scrcpy_state
-            .metadata_cache
-            .lock()
-            .map_err(|err| err.to_string())?;
-        serials
-            .iter()
-            .filter_map(|serial| {
-                let (cached_at, metadata) = cache.get(serial)?;
-                (now.duration_since(*cached_at) < Duration::from_secs(30))
-                    .then(|| (serial.clone(), metadata.clone()))
-            })
-            .collect::<HashMap<_, _>>()
-    };
-    let stale_serials = serials
-        .iter()
-        .filter(|serial| !cached.contains_key(*serial))
-        .cloned()
-        .collect::<Vec<_>>();
-    let refreshed = tauri::async_runtime::spawn_blocking(move || {
-        stale_serials
-            .into_iter()
-            .map(|serial| {
-                let metadata = collect_scrcpy_metadata(&serial);
-                (serial, metadata)
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|err| err.to_string())?;
-    let mut combined = cached;
-    if !refreshed.is_empty() {
-        let mut cache = scrcpy_state
-            .metadata_cache
-            .lock()
-            .map_err(|err| err.to_string())?;
-        for (serial, metadata) in refreshed {
-            cache.insert(serial.clone(), (now, metadata.clone()));
-            combined.insert(serial, metadata);
-        }
-    }
-    Ok(serials
-        .into_iter()
-        .filter_map(|serial| combined.remove(&serial))
-        .collect())
-}
-
-#[tauri::command]
-async fn get_scrcpy_frame(serial: String) -> Result<Vec<u8>, String> {
-    let serial = serial.trim().to_string();
-    if serial.is_empty() {
-        return Err("Serial is empty".to_string());
-    }
-    tauri::async_runtime::spawn_blocking(move || capture_scrcpy_frame(&serial))
-        .await
-        .map_err(|err| err.to_string())?
-}
-
-fn ensure_scrcpy_wrap_window(app: &AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("scrcpy-wrap") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(
-        app,
-        "scrcpy-wrap",
-        WebviewUrl::App("index.html#scrcpy-wrap".into()),
-    )
-    .title("ATM Scrcpy Wrap")
-    .inner_size(1280.0, 820.0)
-    .min_inner_size(760.0, 520.0)
-    .resizable(true)
-    .build()
-    .map(|_| ())
-    .map_err(|err| format!("Cannot open Scrcpy Wrap window: {err}"))
-}
-
-fn collect_scrcpy_metadata(serial: &str) -> ScrcpyDeviceMetadata {
-    let model = adb_device_output(serial, &["shell", "getprop", "ro.product.model"])
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    ScrcpyDeviceMetadata {
-        serial: serial.to_string(),
-        model: value_or_dash(model),
-        battery_level: battery_level(serial),
-    }
-}
-
-fn battery_level(serial: &str) -> String {
-    let output = adb_device_output(serial, &["shell", "dumpsys", "battery"]).unwrap_or_default();
-    let level = find_after_colon(&output, "level").unwrap_or_default();
-    if level.is_empty() {
-        "-".to_string()
-    } else {
-        format!("{level}%")
-    }
-}
-
-fn capture_scrcpy_frame(serial: &str) -> Result<Vec<u8>, String> {
-    let primary = adb_device_binary(serial, &["exec-out", "screencap", "-p"])?;
-    if is_png(&primary) {
-        return Ok(primary);
-    }
-
-    let safe_serial = serial
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect::<String>();
-    let remote_path = format!("/sdcard/atm_scrcpy_frame_{safe_serial}.png");
-    adb_device_output(serial, &["shell", "screencap", "-p", &remote_path])?;
-    let fallback = adb_device_binary(serial, &["exec-out", "cat", &remote_path])?;
-    let _ = adb_device_output(serial, &["shell", "rm", "-f", &remote_path]);
-    if is_png(&fallback) {
-        return Ok(fallback);
-    }
-
-    Err(format!(
-        "screencap did not return PNG data for {serial} ({} bytes)",
-        fallback.len()
-    ))
 }
 
 fn scrcpy_bin() -> String {
@@ -1445,14 +1268,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(RunState::default())
-        .manage(ScrcpyState::default())
         .invoke_handler(tauri::generate_handler![
             default_atm_root,
             preflight,
             list_devices,
-            open_scrcpy_wrap,
-            get_scrcpy_wrap_devices,
-            get_scrcpy_frame,
             press_device_home,
             open_native_scrcpy,
             update_tools,

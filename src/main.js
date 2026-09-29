@@ -84,194 +84,29 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function initScrcpyWrap() {
-  app.innerHTML = `
-    <main class="scrcpy-wrap">
-      <section class="scrcpy-grid" id="scrcpyGrid">
-        <div class="empty large">Waiting for scrcpy device...</div>
-      </section>
-      <button class="scrcpy-floating-refresh" id="scrcpyRefreshBtn">Refresh</button>
-    </main>
-  `;
-
-  const grid = document.querySelector("#scrcpyGrid");
-  const refreshButton = document.querySelector("#scrcpyRefreshBtn");
-  let devices = [];
-  const frameUrls = new Map();
-  let frameInFlight = false;
-  let frameCursor = 0;
-
-  async function refresh() {
-    try {
-      devices = await invoke("get_scrcpy_wrap_devices");
-      render();
-    } catch (error) {
-      grid.innerHTML = `<div class="empty large">Scrcpy metadata failed: ${escapeHtml(error)}</div>`;
-    }
+async function openNativeScrcpy(serial) {
+  if (!serial) return;
+  appendLog(`[scrcpy] Opening native scrcpy for ${serial}...`);
+  try {
+    await invoke("open_native_scrcpy", { serial });
+    appendLog(`[scrcpy] Native scrcpy launched for ${serial}`);
+  } catch (error) {
+    appendLog(`[scrcpy] Failed to launch native scrcpy for ${serial}: ${error}`);
   }
-
-  function render() {
-    if (!devices.length) {
-      grid.innerHTML = `<div class="empty large">Trigger SCRCPY from a device card</div>`;
-      return;
-    }
-    grid.style.setProperty("--scrcpy-count", devices.length);
-    applyScrcpyGridLayout();
-    grid.innerHTML = devices.map((device) => `
-      <article class="scrcpy-tile">
-        ${renderScrcpyFrame(device)}
-        <div class="scrcpy-overlay">
-          <header>
-            <div>
-              <h2>${escapeHtml(device.model || "Unknown")}</h2>
-              <p>${escapeHtml(device.serial)}</p>
-            </div>
-            <b class="status-pass"><small>Battery level:</small>${escapeHtml(device.battery_level || "-")}</b>
-          </header>
-        </div>
-        <div class="scrcpy-tile-actions">
-          <button data-scrcpy-action="home" data-serial="${escapeHtml(device.serial)}" title="Home">HOME</button>
-          <button data-scrcpy-action="brightness" data-serial="${escapeHtml(device.serial)}" title="Max brightness">BRIGHT</button>
-          <button data-scrcpy-action="frame" data-serial="${escapeHtml(device.serial)}" title="Update screencap">CAP</button>
-          <button data-scrcpy-action="native" data-serial="${escapeHtml(device.serial)}" title="Open native scrcpy">NATIVE</button>
-        </div>
-      </article>
-    `).join("");
-  }
-
-  function renderScrcpyFrame(device) {
-    const frameUrl = frameUrls.get(device.serial);
-    if (frameUrl) {
-      return `<img class="scrcpy-frame" data-frame-serial="${escapeHtml(device.serial)}" src="${frameUrl}" alt="${escapeHtml(device.serial)} screen" />`;
-    }
-    return `
-      <div class="scrcpy-video-placeholder skeleton">
-        <strong>${escapeHtml(device.model || "Unknown")}</strong>
-        <span>${escapeHtml(device.serial)}</span>
-      </div>
-    `;
-  }
-
-  async function refreshNextFrame() {
-    if (frameInFlight || document.hidden || !devices.length) return;
-    const device = devices[frameCursor % devices.length];
-    frameCursor = (frameCursor + 1) % devices.length;
-    frameInFlight = true;
-    try {
-      await refreshFrameForSerial(device.serial);
-    } catch (error) {
-      console.warn(`scrcpy frame failed for ${device.serial}`, error);
-    } finally {
-      frameInFlight = false;
-    }
-  }
-
-  async function refreshFrameForSerial(serial) {
-    const bytes = await invoke("get_scrcpy_frame", { serial });
-    if (!isPngBytes(bytes)) throw new Error("Frame is not PNG data");
-    const nextUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
-    const previousUrl = frameUrls.get(serial);
-    frameUrls.set(serial, nextUrl);
-    updateFrameImage(serial, nextUrl);
-    if (previousUrl) setTimeout(() => URL.revokeObjectURL(previousUrl), 500);
-  }
-
-  function applyScrcpyGridLayout() {
-    const count = Math.max(1, devices.length);
-    const rect = grid.getBoundingClientRect();
-    const width = rect.width || window.innerWidth;
-    const height = Math.max(1, rect.height || window.innerHeight);
-    const portraitW = 9;
-    const portraitH = 16;
-    let best = { cols: 1, rows: count, score: 0 };
-    for (let cols = 1; cols <= count; cols += 1) {
-      const rows = Math.ceil(count / cols);
-      const cellW = Math.max(1, width / cols);
-      const cellH = Math.max(1, height / rows);
-      const scale = Math.min(cellW / portraitW, cellH / portraitH);
-      const usedW = portraitW * scale;
-      const usedH = portraitH * scale;
-      const fillRatio = (usedW * usedH) / (cellW * cellH);
-      const score = usedW * usedH * fillRatio;
-      if (score > best.score) best = { cols, rows, score };
-    }
-    const { cols, rows } = best;
-    grid.style.setProperty("--scrcpy-cols", cols);
-    grid.style.setProperty("--scrcpy-rows", rows);
-  }
-
-  function isPngBytes(bytes) {
-    return bytes?.length >= 8
-      && bytes[0] === 0x89
-      && bytes[1] === 0x50
-      && bytes[2] === 0x4e
-      && bytes[3] === 0x47
-      && bytes[4] === 0x0d
-      && bytes[5] === 0x0a
-      && bytes[6] === 0x1a
-      && bytes[7] === 0x0a;
-  }
-
-  function updateFrameImage(serial, frameUrl) {
-    const existing = grid.querySelector(`[data-frame-serial="${CSS.escape(serial)}"]`);
-    if (existing) {
-      requestAnimationFrame(() => {
-        existing.src = frameUrl;
-      });
-      return;
-    }
-    render();
-  }
-
-  refreshButton.addEventListener("click", refresh);
-  grid.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-scrcpy-action]");
-    if (!button) return;
-    const serial = button.dataset.serial;
-    const action = button.dataset.scrcpyAction;
-    button.disabled = true;
-    try {
-      if (action === "home") {
-        await invoke("press_device_home", { serial });
-      } else if (action === "brightness") {
-        await invoke("set_device_lamp", { serial, brighten: true });
-      } else if (action === "frame") {
-        await refreshFrameForSerial(serial);
-      } else if (action === "native") {
-        await invoke("open_native_scrcpy", { serial });
-      }
-    } catch (error) {
-      console.warn(`scrcpy ${action} failed for ${serial}`, error);
-    } finally {
-      button.disabled = false;
-    }
-  });
-  window.addEventListener("resize", () => {
-    applyScrcpyGridLayout();
-  });
-  listen("scrcpy-wrap-updated", refresh);
-  refresh().then(refreshNextFrame);
-  setInterval(refresh, 30000);
-  setInterval(refreshNextFrame, 1200);
 }
-
-if (location.hash === "#scrcpy-wrap") {
-  initScrcpyWrap();
-} else {
 app.innerHTML = `
-  <div class="shell">
+  <div class="shell" id="shell">
     <div class="splash" id="splash">
       <img src="${atmLogo}" alt="ATM" />
     </div>
     <header class="titlebar">
-      <div class="brand">
+      <div class="brand" id="brandGroup" role="button" tabindex="0" title="Konfigurasi Sistem & Preflight Check (Klik untuk Pengaturan)">
         <img class="brand-mark" src="${atmLogo}" alt="ATM" />
         <div>
           <h1>ATM BERSAMA HUB</h1>
           <p>Automated Device Test Orchestration Engine</p>
         </div>
       </div>
-      <button class="icon-button" id="preflightBtn" title="Konfigurasi Sistem & Preflight Check">⚙</button>
     </header>
 
     <aside class="devices-pane">
@@ -279,7 +114,7 @@ app.innerHTML = `
         <h2>FLEET DEVICES</h2>
         <div class="pane-actions">
           <button class="mini-button" id="unselectBtn">Unselect All</button>
-          <button class="mini-button" id="refreshBtn">Refresh Fleet</button>
+          <button class="mini-button" id="refreshBtn">Refresh Devices</button>
         </div>
       </div>
       <div class="device-list" id="deviceList"></div>
@@ -291,7 +126,7 @@ app.innerHTML = `
         <button class="run-button" id="runBtn">Jalankan Pengujian (0)</button>
         <button class="ghost-button" id="cancelBtn" disabled>Batal</button>
         <div class="toolbar-spacer"></div>
-        <label class="retry">Konkuransi: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
+        <label class="retry">Concurrent: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
         <label class="check"><input id="allTools" type="checkbox" checked /> Semua Test</label>
         <label class="check"><input id="onlyFailed" type="checkbox" /> Gagal Saja</label>
       </div>
@@ -299,7 +134,9 @@ app.innerHTML = `
       <section class="test-area" id="testArea"></section>
     </main>
 
-    <aside class="summary-pane">
+    <div class="panel-resizer" id="panelResizer" title="Geser untuk mengubah ukuran panel"></div>
+
+    <aside class="summary-pane" id="summaryPane">
       <section class="summary">
         <h2>EXECUTION METRICS</h2>
         <div class="metric-row"><span>Total Dieksekusi:</span><strong id="executedMetric">0</strong></div>
@@ -343,8 +180,6 @@ app.innerHTML = `
         <pre class="settings-output" id="settingsOutput"></pre>
       </section>
     </div>
-
-
   </div>
 `;
 
@@ -356,7 +191,7 @@ const els = {
   cancelBtn: document.querySelector("#cancelBtn"),
   unselectBtn: document.querySelector("#unselectBtn"),
   refreshBtn: document.querySelector("#refreshBtn"),
-  preflightBtn: document.querySelector("#preflightBtn"),
+  brandGroup: document.querySelector("#brandGroup"),
   settingsModal: document.querySelector("#settingsModal"),
   settingsCloseBtn: document.querySelector("#settingsCloseBtn"),
   autoDetectBtn: document.querySelector("#autoDetectBtn"),
@@ -390,8 +225,51 @@ els.unselectBtn.addEventListener("click", () => {
 });
 document.addEventListener("DOMContentLoaded", () => {
   els.testArea.innerHTML = "";
+  initPanelResizer();
   render();
 });
+
+function initPanelResizer() {
+  const shell = document.querySelector("#shell");
+  const resizer = document.querySelector("#panelResizer");
+  const summaryPane = document.querySelector("#summaryPane");
+  if (!shell || !resizer || !summaryPane) return;
+
+  const savedWidth = localStorage.getItem("summaryPaneWidth");
+  if (savedWidth) {
+    shell.style.setProperty("--summary-pane-width", `${savedWidth}px`);
+  }
+
+  let isDragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  resizer.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    startX = e.clientX;
+    startWidth = summaryPane.getBoundingClientRect().width;
+    resizer.classList.add("resizing");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!isDragging) return;
+    const deltaX = startX - e.clientX;
+    const newWidth = Math.max(240, Math.min(680, startWidth + deltaX));
+    shell.style.setProperty("--summary-pane-width", `${newWidth}px`);
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (!isDragging) return;
+    isDragging = false;
+    resizer.classList.remove("resizing");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const currentWidth = summaryPane.getBoundingClientRect().width;
+    localStorage.setItem("summaryPaneWidth", Math.round(currentWidth));
+  });
+}
 
 let confettiInterval = null;
 const confettiContainer = document.createElement("div");
@@ -473,7 +351,13 @@ els.onlyFailed.addEventListener("change", () => {
 els.concurrencyInput.addEventListener("input", () => {
   state.concurrency = Math.max(1, Number(els.concurrencyInput.value || 1));
 });
-els.preflightBtn.addEventListener("click", openSettings);
+els.brandGroup.addEventListener("click", openSettings);
+els.brandGroup.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    openSettings();
+  }
+});
 els.settingsCloseBtn.addEventListener("click", closeSettings);
 els.settingsModal.addEventListener("click", (event) => {
   if (event.target === els.settingsModal) closeSettings();
@@ -707,7 +591,7 @@ function renderDevices() {
   els.deviceList.querySelectorAll("[data-scrcpy]").forEach((button) => {
     button.addEventListener("click", async (e) => {
       e.stopPropagation();
-      await openScrcpyWrap(button.dataset.scrcpy);
+      await openNativeScrcpy(button.dataset.scrcpy);
     });
   });
 }
@@ -1540,13 +1424,7 @@ function formatDuration(ms) {
   return `${h}:${m}:${s}`;
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
+
 
 setInterval(() => {
   if (state.running) {
@@ -1556,4 +1434,3 @@ setInterval(() => {
 }, 1000);
 
 refreshDevices();
-}
