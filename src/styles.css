@@ -16,7 +16,7 @@
   --radius-sm: 2px;
   --radius-md: 4px;
   --radius-lg: 6px;
-  --summary-pane-width: 380px;
+  --summary-pane-width: 500px;
   font-family: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -46,7 +46,7 @@ input {
 
 .shell {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(320px, 1fr) 6px var(--summary-pane-width, 380px);
+  grid-template-columns: minmax(280px, 340px) 1fr 6px var(--summary-pane-width, 500px);
   grid-template-rows: 64px 1fr;
   width: 100vw;
   height: 100vh;
@@ -488,11 +488,10 @@ h2 {
 .model-group {
   display: grid;
   gap: 8px;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-left: 3px solid #666b74;
-  border-radius: 2px;
-  background: #15171a;
+  padding: 0;
+  border: none;
+  background: transparent;
+  margin-bottom: 10px;
 }
 
 .model-group-header {
@@ -500,7 +499,7 @@ h2 {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 2px 5px;
+  padding: 4px 6px;
   border-bottom: 1px solid var(--line-soft);
   color: var(--text);
   font-size: 11px;
@@ -513,17 +512,16 @@ h2 {
   font-size: 9px;
 }
 
-.model-group-0 { border-left-color: #4d8fd1; background: #142338; }
-.model-group-1 { border-left-color: #45a99a; background: #122b2c; }
-.model-group-2 { border-left-color: #9b78d1; background: #211a35; }
-.model-group-3 { border-left-color: #c39b52; background: #302817; }
-.model-group-4 { border-left-color: #c87581; background: #321b24; }
+.model-group-0, .model-group-1, .model-group-2, .model-group-3, .model-group-4 {
+  background: transparent !important;
+  border: none !important;
+}
 
-.model-group-0 .device-card { background: #1b304a; border-color: #31577d; }
-.model-group-1 .device-card { background: #193b3b; border-color: #2e7069; }
-.model-group-2 .device-card { background: #2b2144; border-color: #60468c; }
-.model-group-3 .device-card { background: #3a301d; border-color: #80652f; }
-.model-group-4 .device-card { background: #3d222b; border-color: #82414e; }
+.model-group-0 .device-card { background: #162438; border-color: #31577d; border-left: 3px solid #4d8fd1; }
+.model-group-1 .device-card { background: #152f2f; border-color: #2e7069; border-left: 3px solid #45a99a; }
+.model-group-2 .device-card { background: #231a38; border-color: #60468c; border-left: 3px solid #9b78d1; }
+.model-group-3 .device-card { background: #2f2717; border-color: #80652f; border-left: 3px solid #c39b52; }
+.model-group-4 .device-card { background: #331a23; border-color: #82414e; border-left: 3px solid #c87581; }
 
 .device-card {
   width: 100%;
@@ -555,35 +553,50 @@ h2 {
 }
 
 .check-dot,
-.row-check {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  color: var(--green);
-  background: transparent;
-  font-weight: 900;
-  font-size: 12px;
+.row-check,
+.head-check-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1.5px solid #484f58;
+  background-color: #161b22;
+  color: transparent;
+  cursor: pointer;
+  transition: all 120ms ease;
+  flex-shrink: 0;
+  padding: 0;
+  position: relative;
 }
 
 .check-dot.checked,
-.row-check.checked {
-  border-color: var(--green);
-  background: #2f4538;
+.row-check.checked,
+.head-check-btn.checked {
+  border-color: #238636;
+  background-color: #238636;
+  box-shadow: 0 0 6px rgba(35, 134, 54, 0.4);
 }
 
-.device-inline-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
+.check-dot.checked::after,
+.row-check.checked::after,
+.head-check-btn.checked::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2.2px 2.2px 0;
+  transform: rotate(45deg);
+  margin-bottom: 2px;
 }
 
-.row-check {
-  cursor: pointer;
-  padding: 0;
+.check-dot:hover:not(.checked),
+.row-check:hover:not(.checked),
+.head-check-btn:hover:not(.checked) {
+  border-color: var(--accent);
+  background-color: rgba(47, 129, 247, 0.15);
 }
 
 .device-top strong {
@@ -699,32 +712,58 @@ h2 {
 }
 
 .device-flow {
-  margin-top: 12px;
-  color: var(--muted);
-}
-
-.device-flow-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
-  font-size: 10px;
-  font-weight: 900;
-}
-
-.device-flow-track {
-  height: 7px;
+  position: relative;
+  height: 22px;
+  margin-top: 10px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
-  border-radius: 999px;
-  background: #050606;
 }
 
 .device-flow-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
   height: 100%;
   border-radius: inherit;
-  background: currentColor;
+  background: var(--green, #238636);
   transition: width 220ms ease, background 220ms ease;
+  z-index: 1;
+}
+
+.status-running .device-flow-fill,
+.status-executing .device-flow-fill {
+  background: var(--blue, #2f81f7);
+}
+
+.status-pass .device-flow-fill {
+  background: #238636;
+}
+
+.status-failed .device-flow-fill,
+.status-error .device-flow-fill {
+  background: #da3633;
+}
+
+.status-warning .device-flow-fill {
+  background: #d29922;
+}
+
+.device-flow-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+  padding: 0 8px;
+  color: #ffffff;
+  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
 .devices-pane footer {
@@ -860,33 +899,6 @@ td:first-child {
   gap: 6px;
 }
 
-.head-check-btn {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--cyan);
-  font-size: 11px;
-  font-weight: 800;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-  transition: all 0.15s ease;
-}
-
-.head-check-btn.checked {
-  background: rgba(0, 229, 255, 0.15);
-  border-color: var(--cyan);
-}
-
-.head-check-btn:hover:not(:disabled) {
-  border-color: var(--cyan);
-  background: rgba(0, 229, 255, 0.25);
-}
-
 .head-check-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -913,18 +925,39 @@ td:nth-child(5) {
 }
 
 .progress-track {
-  height: 4px;
-  margin-top: 8px;
-  border-radius: 999px;
-  background: transparent;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: currentColor;
-  transition: width 180ms ease;
+  background: var(--cyan, #2f81f7);
+  transition: width 200ms ease, background 200ms ease;
+  box-shadow: 0 0 8px rgba(47, 129, 247, 0.4);
+}
+
+.status-running .progress-fill,
+.status-executing .progress-fill {
+  background: linear-gradient(90deg, #2f81f7 0%, #58a6ff 50%, #2f81f7 100%);
+  background-size: 200% 100%;
+  animation: loading-bar-shimmer 1.4s infinite linear;
+}
+
+.status-pass .progress-fill {
+  background: var(--green, #3fb950);
+}
+
+.status-failed .progress-fill {
+  background: var(--red, #f85149);
+}
+
+@keyframes loading-bar-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .pass,
@@ -1047,12 +1080,14 @@ td:nth-child(5) {
 }
 
 .summary-pane {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 2;
   border-left: 1px solid var(--line-soft);
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 450px !important;
+  max-width: 850px;
+  width: var(--summary-pane-width, 500px);
   min-height: 0;
 }
 
@@ -1112,14 +1147,33 @@ td:nth-child(5) {
 #logBox {
   flex: 1;
   margin: 0;
-  padding: 0 16px 16px;
+  padding: 8px 16px 16px;
   overflow: auto;
-  color: var(--green);
+  color: #f0f6fc;
   background: #030303;
   font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.log-line-default {
+  color: #f0f6fc;
+}
+
+.log-line-pass {
+  color: var(--green, #3fb950);
+  font-weight: 700;
+}
+
+.log-line-fail {
+  color: var(--red, #f85149);
+  font-weight: 700;
+}
+
+.log-line-info {
+  color: var(--blue, #58a6ff);
+  font-weight: 700;
 }
 
 .status-line {

@@ -235,10 +235,12 @@ function initPanelResizer() {
   const summaryPane = document.querySelector("#summaryPane");
   if (!shell || !resizer || !summaryPane) return;
 
-  const savedWidth = localStorage.getItem("summaryPaneWidth");
-  if (savedWidth) {
-    shell.style.setProperty("--summary-pane-width", `${savedWidth}px`);
+  let savedWidth = parseInt(localStorage.getItem("summaryPaneWidth"), 10);
+  if (!savedWidth || isNaN(savedWidth) || savedWidth < 450 || savedWidth > 850) {
+    savedWidth = 500;
+    localStorage.setItem("summaryPaneWidth", "500");
   }
+  shell.style.setProperty("--summary-pane-width", `${savedWidth}px`);
 
   let isDragging = false;
   let startX = 0;
@@ -256,7 +258,7 @@ function initPanelResizer() {
   window.addEventListener("mousemove", (e) => {
     if (!isDragging) return;
     const deltaX = startX - e.clientX;
-    const newWidth = Math.max(240, Math.min(680, startWidth + deltaX));
+    const newWidth = Math.max(450, Math.min(850, startWidth + deltaX));
     shell.style.setProperty("--summary-pane-width", `${newWidth}px`);
   });
 
@@ -266,8 +268,8 @@ function initPanelResizer() {
     resizer.classList.remove("resizing");
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-    const currentWidth = summaryPane.getBoundingClientRect().width;
-    localStorage.setItem("summaryPaneWidth", Math.round(currentWidth));
+    const currentWidth = Math.max(450, Math.round(summaryPane.getBoundingClientRect().width));
+    localStorage.setItem("summaryPaneWidth", currentWidth);
   });
 }
 
@@ -510,19 +512,17 @@ function renderDevices() {
 	  const progress = deviceProgress(device.serial);
     const flow = selected ? `
       <div class="device-flow ${statusClass(progress.status)}">
-        <div class="device-flow-top">
+        <div class="device-flow-fill" style="width:${progress.percent}%"></div>
+        <div class="device-flow-content">
           <span>${escapeHtml(progress.label)}</span>
           <strong>${progress.percent}%</strong>
-        </div>
-        <div class="device-flow-track">
-          <div class="device-flow-fill" style="width:${progress.percent}%"></div>
         </div>
       </div>
     ` : "";
     return `
       <article class="device-card ${selected ? "selected" : ""} ${ready ? "" : "disabled"}" data-serial="${escapeHtml(device.serial)}" role="button" tabindex="${ready ? "0" : "-1"}">
         <div class="device-top">
-          <span class="check-dot ${selected ? "checked" : ""}">${selected ? "✓" : ""}</span>
+          <span class="check-dot ${selected ? "checked" : ""}"></span>
           <div>
             <strong>${escapeHtml(device.model || "Unknown")}</strong>
 	            <p><b>${escapeHtml(device.serial)}</b> <span class="connection-status ${connection}" aria-label="${ready ? "Tersambung" : escapeHtml(deviceStateLabel(device.state))}" title="${ready ? "Tersambung" : escapeHtml(deviceStateLabel(device.state))}"></span></p>
@@ -628,9 +628,7 @@ function renderTests() {
       return `
         <tr class="${checked ? "checked" : ""}" data-tool="${testcase.tool}">
           <td>
-            <button class="row-check ${checked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" data-tool="${testcase.tool}" title="${isDeviceRunning ? "Sedang Berjalan (Terkunci)" : "Pilih testcase"}" ${isDeviceRunning ? "disabled" : ""}>
-              ${checked ? "✓" : ""}
-            </button>
+            <button class="row-check ${checked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" data-tool="${testcase.tool}" title="${isDeviceRunning ? "Sedang Berjalan (Terkunci)" : "Pilih testcase"}" ${isDeviceRunning ? "disabled" : ""}></button>
           </td>
           <td>
             <span class="test-name">${escapeHtml(testcase.name)}</span>
@@ -657,9 +655,7 @@ function renderTests() {
             <tr>
               <th>
                 <div class="th-select">
-                  <button class="head-check-btn ${hasAnyChecked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" title="${isDeviceRunning ? "Sedang Berjalan (Terkunci)" : hasAnyChecked ? "Hapus semua centang testcase perangkat ini" : "Pilih semua testcase perangkat ini"}" ${isDeviceRunning ? "disabled" : ""}>
-                    ${hasAnyChecked ? "✓" : ""}
-                  </button>
+                  <button class="head-check-btn ${hasAnyChecked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" title="${isDeviceRunning ? "Sedang Berjalan (Terkunci)" : hasAnyChecked ? "Hapus semua centang testcase perangkat ini" : "Pilih semua testcase perangkat ini"}" ${isDeviceRunning ? "disabled" : ""}></button>
                   <span>${hasAnyChecked ? "Uncheck" : "Select"}</span>
                 </div>
               </th>
@@ -967,7 +963,20 @@ function updateCtsVerifierToolResult(serial) {
 }
 
 function renderLog() {
-  els.logBox.textContent = state.logLines.slice(-600).join("\n");
+  const lines = state.logLines.slice(-600);
+  els.logBox.innerHTML = lines.map((line) => {
+    const escaped = escapeHtml(line);
+    const lower = line.toLowerCase();
+    let colorClass = "log-line-default";
+    if (lower.includes("fail") || lower.includes("error") || lower.includes("cancel")) {
+      colorClass = "log-line-fail";
+    } else if (lower.includes("pass") || lower.includes("complete") || lower.includes("success")) {
+      colorClass = "log-line-pass";
+    } else if (lower.includes("save") || lower.includes("install")) {
+      colorClass = "log-line-info";
+    }
+    return `<div class="${colorClass}">${escaped}</div>`;
+  }).join("");
   els.logBox.scrollTop = els.logBox.scrollHeight;
 }
 
