@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "atm-tauri-launcher"
-version = "0.1.67"
+version = "0.1.68"
 dependencies = [
  "serde",
  "serde_json",

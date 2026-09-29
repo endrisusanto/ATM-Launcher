@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -111,14 +111,13 @@ fn preflight(atm_root: Option<String>) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn list_devices() -> Result<Vec<DeviceInfo>, String> {
+async fn list_devices() -> Result<Vec<DeviceInfo>, String> {
     let adb = adb_path();
-    let output = run_output(Command::new(&adb).args(["devices", "-l"]))?;
-    let mut devices = Vec::new();
+    let output = run_output_with_timeout(Command::new(&adb).args(["devices", "-l"]), Duration::from_secs(6))?;
+    let mut raw_devices = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("List of devices") || trimmed.starts_with('*')
-        {
+        if trimmed.is_empty() || trimmed.starts_with("List of devices") || trimmed.starts_with('*') {
             continue;
         }
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -127,68 +126,86 @@ fn list_devices() -> Result<Vec<DeviceInfo>, String> {
         }
         let serial = parts[0].to_string();
         let state = parts[1].to_string();
-        let props = if state == "device" {
-            adb_props(&adb, &serial).unwrap_or_default()
-        } else {
-            HashMap::new()
-        };
-        devices.push(DeviceInfo {
-            serial: serial.clone(),
-            state,
-            model: first_non_empty(&[
-                token_value(trimmed, "model"),
-                props.get("ro.product.model").cloned().unwrap_or_default(),
-                props
-                    .get("ro.product.vendor.model")
-                    .cloned()
-                    .unwrap_or_default(),
-            ]),
-            build_type: props.get("ro.build.type").cloned().unwrap_or_default(),
-            android: first_non_empty(&[
-                props
-                    .get("ro.build.version.release")
-                    .cloned()
-                    .unwrap_or_default(),
-                props
-                    .get("ro.system.build.version.release")
-                    .cloned()
-                    .unwrap_or_default(),
-            ]),
-            build: first_non_empty(&[
-                props
-                    .get("ro.build.version.incremental")
-                    .cloned()
-                    .unwrap_or_default(),
-                props
-                    .get("ro.vendor.build.version.incremental")
-                    .cloned()
-                    .unwrap_or_default(),
-            ]),
-            csc: first_non_empty(&[
-                props
-                    .get("ril.official_cscver")
-                    .cloned()
-                    .unwrap_or_default(),
-                props.get("ro.csc.sales_code").cloned().unwrap_or_default(),
-            ]),
-            security_patch: props
-                .get("ro.build.version.security_patch")
-                .cloned()
-                .unwrap_or_default(),
-            carrier: props.get("ro.csc.sales_code").cloned().unwrap_or_default(),
-            region: props
-                .get("ro.product.locale.region")
-                .cloned()
-                .unwrap_or_else(|| "INDONESIA".to_string()),
-            modem: normalize_modem(first_non_empty(&[
-                props
-                    .get("gsm.version.baseband")
-                    .cloned()
-                    .unwrap_or_default(),
-                props.get("ril.modem.board").cloned().unwrap_or_default(),
-            ])),
-        });
+        raw_devices.push((serial, state, trimmed.to_string()));
     }
+
+    let handles: Vec<_> = raw_devices
+        .into_iter()
+        .map(|(serial, state, trimmed)| {
+            let adb_clone = adb.clone();
+            thread::spawn(move || {
+                let props = if state == "device" {
+                    adb_props(&adb_clone, &serial).unwrap_or_default()
+                } else {
+                    HashMap::new()
+                };
+                DeviceInfo {
+                    serial: serial.clone(),
+                    state,
+                    model: first_non_empty(&[
+                        token_value(&trimmed, "model"),
+                        props.get("ro.product.model").cloned().unwrap_or_default(),
+                        props
+                            .get("ro.product.vendor.model")
+                            .cloned()
+                            .unwrap_or_default(),
+                    ]),
+                    build_type: props.get("ro.build.type").cloned().unwrap_or_default(),
+                    android: first_non_empty(&[
+                        props
+                            .get("ro.build.version.release")
+                            .cloned()
+                            .unwrap_or_default(),
+                        props
+                            .get("ro.system.build.version.release")
+                            .cloned()
+                            .unwrap_or_default(),
+                    ]),
+                    build: first_non_empty(&[
+                        props
+                            .get("ro.build.version.incremental")
+                            .cloned()
+                            .unwrap_or_default(),
+                        props
+                            .get("ro.vendor.build.version.incremental")
+                            .cloned()
+                            .unwrap_or_default(),
+                    ]),
+                    csc: first_non_empty(&[
+                        props
+                            .get("ril.official_cscver")
+                            .cloned()
+                            .unwrap_or_default(),
+                        props.get("ro.csc.sales_code").cloned().unwrap_or_default(),
+                    ]),
+                    security_patch: props
+                        .get("ro.build.version.security_patch")
+                        .cloned()
+                        .unwrap_or_default(),
+                    carrier: props.get("ro.csc.sales_code").cloned().unwrap_or_default(),
+                    region: props
+                        .get("ro.product.locale.region")
+                        .cloned()
+                        .unwrap_or_else(|| "INDONESIA".to_string()),
+                    modem: normalize_modem(first_non_empty(&[
+                        props
+                            .get("gsm.version.baseband")
+                            .cloned()
+                            .unwrap_or_default(),
+                        props.get("ril.modem.board").cloned().unwrap_or_default(),
+                    ])),
+                }
+            })
+        })
+        .collect();
+
+    let mut devices = Vec::new();
+    for handle in handles {
+        if let Ok(device) = handle.join() {
+            devices.push(device);
+        }
+    }
+
     Ok(devices)
 }
 
@@ -1530,6 +1547,25 @@ fn adb_path() -> String {
             return candidate.to_string_lossy().to_string();
         }
     }
+    if cfg!(windows) {
+        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+            let candidate = PathBuf::from(local_app_data).join("Android").join("Sdk").join("platform-tools").join("adb.exe");
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+        if let Ok(user_profile) = env::var("USERPROFILE") {
+            let candidate = PathBuf::from(&user_profile).join("AppData").join("Local").join("Android").join("Sdk").join("platform-tools").join("adb.exe");
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+            let candidate2 = PathBuf::from(&user_profile).join("Android").join("Sdk").join("platform-tools").join("adb.exe");
+            if candidate2.exists() {
+                return candidate2.to_string_lossy().to_string();
+            }
+        }
+        return "adb.exe".to_string();
+    }
     "adb".to_string()
 }
 
@@ -1544,11 +1580,15 @@ fn java_bin() -> String {
             return candidate.to_string_lossy().to_string();
         }
     }
-    "java".to_string()
+    if cfg!(windows) {
+        "java.exe".to_string()
+    } else {
+        "java".to_string()
+    }
 }
 
 fn adb_props(adb: &str, serial: &str) -> Result<HashMap<String, String>, String> {
-    let output = run_output(Command::new(adb).args(["-s", serial, "shell", "getprop"]))?;
+    let output = run_output_with_timeout(Command::new(adb).args(["-s", serial, "shell", "getprop"]), Duration::from_secs(6))?;
     let mut props = HashMap::new();
     for line in output.lines() {
         if let Some((key, value)) = parse_getprop_line(line) {
@@ -1572,30 +1612,115 @@ fn adb_device_binary(serial: &str, args: &[&str]) -> Result<Vec<u8>, String> {
     run_binary(&mut command)
 }
 
-fn run_output(command: &mut Command) -> Result<String, String> {
+fn run_output_with_timeout(command: &mut Command, timeout: Duration) -> Result<String, String> {
     #[cfg(windows)]
     command.creation_flags(0x08000000);
-    let output = command.output().map_err(|err| err.to_string())?;
-    let mut text = String::new();
-    text.push_str(&String::from_utf8_lossy(&output.stdout));
-    text.push_str(&String::from_utf8_lossy(&output.stderr));
-    if !output.status.success() {
-        return Err(text);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|err| err.to_string())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut out = String::new();
+        if let Some(stdout) = stdout {
+            let _ = BufReader::new(stdout).read_to_string(&mut out);
+        }
+        let mut err_out = String::new();
+        if let Some(stderr) = stderr {
+            let _ = BufReader::new(stderr).read_to_string(&mut err_out);
+        }
+        let _ = tx.send((out, err_out));
+    });
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let (stdout_str, stderr_str) = rx.recv_timeout(Duration::from_millis(1000)).unwrap_or_default();
+                let mut text = String::new();
+                text.push_str(&stdout_str);
+                text.push_str(&stderr_str);
+                if !status.success() {
+                    return Err(text);
+                }
+                return Ok(text);
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("Command timed out".to_string());
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err.to_string());
+            }
+        }
     }
-    Ok(text)
+}
+
+fn run_output(command: &mut Command) -> Result<String, String> {
+    run_output_with_timeout(command, Duration::from_secs(12))
+}
+
+fn run_binary_with_timeout(command: &mut Command, timeout: Duration) -> Result<Vec<u8>, String> {
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|err| err.to_string())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut out = Vec::new();
+        if let Some(mut stdout) = stdout {
+            let _ = stdout.read_to_end(&mut out);
+        }
+        let mut err_out = String::new();
+        if let Some(stderr) = stderr {
+            let _ = BufReader::new(stderr).read_to_string(&mut err_out);
+        }
+        let _ = tx.send((out, err_out));
+    });
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let (stdout_bytes, stderr_str) = rx.recv_timeout(Duration::from_millis(1000)).unwrap_or_default();
+                if !status.success() {
+                    return Err(stderr_str);
+                }
+                return Ok(stdout_bytes);
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("Command timed out".to_string());
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err.to_string());
+            }
+        }
+    }
 }
 
 fn run_binary(command: &mut Command) -> Result<Vec<u8>, String> {
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let output = command.output().map_err(|err| err.to_string())?;
-    if !output.status.success() {
-        let mut text = String::new();
-        text.push_str(&String::from_utf8_lossy(&output.stdout));
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        return Err(text);
-    }
-    Ok(output.stdout)
+    run_binary_with_timeout(command, Duration::from_secs(12))
 }
 
 fn cts_log(app: &AppHandle, serial: &str, message: &str) {
