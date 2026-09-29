@@ -66,10 +66,10 @@ function formatStatus(status) {
 
 const testcases = [
   { tool: "cts_verifier", name: "CTS Verifier", description: "Android Compatibility Test Suite Verifier Auto" },
-  { tool: "getprop", name: "GetpropSnapshot", description: "Collect device build properties" },
-  { tool: "bvt", name: "BasicInfoTests", description: "Run BVT basic info compatibility checks" },
-  { tool: "svt", name: "SVTPreloadValidation", description: "Run SVT preload validation" },
-  { tool: "sdt", name: "SDTDeviceTest", description: "Run SDT silent test package" },
+  { tool: "getprop", name: "GetpropSnapshot", description: "Pengumpulan Informasi Build Property Perangkat" },
+  { tool: "bvt", name: "BasicInfoTests (BVT)", description: "Pengujian Informasi Dasar & Kompatibilitas BVT" },
+  { tool: "svt", name: "SVTPreloadValidation", description: "Validasi Preload Aplikasi & Komponen SVT" },
+  { tool: "sdt", name: "SDTDeviceTest", description: "Eksekusi Paket Pengujian Tersembunyi SDT" },
 ];
 
 const terminalStatuses = ["Pass", "Warning", "Failed", "Error"];
@@ -271,29 +271,29 @@ app.innerHTML = `
           <p>Automated Device Test Orchestration Engine</p>
         </div>
       </div>
-      <button class="icon-button" id="preflightBtn" title="System Settings">⚙</button>
+      <button class="icon-button" id="preflightBtn" title="Konfigurasi Sistem & Preflight Check">⚙</button>
     </header>
 
     <aside class="devices-pane">
       <div class="pane-head">
-        <h2>CONNECTED DEVICES</h2>
+        <h2>FLEET DEVICES</h2>
         <div class="pane-actions">
-          <button class="mini-button" id="unselectBtn">Unselect</button>
-          <button class="mini-button" id="refreshBtn">Refresh</button>
+          <button class="mini-button" id="unselectBtn">Unselect All</button>
+          <button class="mini-button" id="refreshBtn">Refresh Fleet</button>
         </div>
       </div>
       <div class="device-list" id="deviceList"></div>
-      <footer>© 2026 ATM Automation</footer>
+      <footer>© 2026 ATM Automation Engine</footer>
     </aside>
 
     <main class="workspace">
       <div class="toolbar">
-        <button class="run-button" id="runBtn">Run Selected</button>
-        <button class="ghost-button" id="cancelBtn" disabled>Cancel</button>
+        <button class="run-button" id="runBtn">Jalankan Pengujian (0)</button>
+        <button class="ghost-button" id="cancelBtn" disabled>Batal</button>
         <div class="toolbar-spacer"></div>
-        <label class="retry">Concurrency: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
-        <label class="check"><input id="allTools" type="checkbox" checked /> All</label>
-        <label class="check"><input id="onlyFailed" type="checkbox" /> Failed</label>
+        <label class="retry">Konkuransi: <input id="concurrencyInput" type="number" min="1" max="16" value="1" /></label>
+        <label class="check"><input id="allTools" type="checkbox" checked /> Semua Test</label>
+        <label class="check"><input id="onlyFailed" type="checkbox" /> Gagal Saja</label>
       </div>
 
       <section class="test-area" id="testArea"></section>
@@ -302,43 +302,43 @@ app.innerHTML = `
     <aside class="summary-pane">
       <section class="summary">
         <h2>EXECUTION METRICS</h2>
-        <div class="metric-row"><span>Executed:</span><strong id="executedMetric">0</strong></div>
-        <div class="metric-row"><span>Executing / Pending:</span><strong id="pendingMetric">0</strong></div>
-        <div class="metric-row"><span>Pass:</span><strong class="pass" id="passMetric">0</strong></div>
-        <div class="metric-row"><span>Fail:</span><strong class="fail" id="failMetric">0</strong></div>
-        <div class="metric-row"><span>Total Runtime:</span><strong id="runtimeMetric">00:00:00</strong></div>
+        <div class="metric-row"><span>Total Dieksekusi:</span><strong id="executedMetric">0</strong></div>
+        <div class="metric-row"><span>Dalam Proses / Antrean:</span><strong id="pendingMetric">0</strong></div>
+        <div class="metric-row"><span>Lulus (Pass):</span><strong class="pass" id="passMetric">0</strong></div>
+        <div class="metric-row"><span>Gagal (Fail):</span><strong class="fail" id="failMetric">0</strong></div>
+        <div class="metric-row"><span>Total Waktu Eksekusi:</span><strong id="runtimeMetric">00:00:00</strong></div>
       </section>
       <section class="running-log">
         <div class="log-head">
-          <h2>RUNNING LOG</h2>
-          <button id="clearLogBtn">[ Clear Log ]</button>
+          <h2>RUNNING LOGS</h2>
+          <button id="clearLogBtn">[ Bersihkan Log ]</button>
         </div>
         <pre id="logBox"></pre>
       </section>
-      <footer class="status-line" id="statusLine">Ready</footer>
+      <footer class="status-line" id="statusLine">Standby</footer>
     </aside>
 
     <div class="modal-backdrop hidden" id="settingsModal">
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <header>
           <div>
-            <h2 id="settingsTitle">SYSTEM CONFIGURATION</h2>
-            <p>ATM Root path configuration and environment preflight check</p>
+            <h2 id="settingsTitle">SYSTEM CONFIGURATION & PREFLIGHT</h2>
+            <p>Konfigurasi jalur ATM Root dan pemeriksaan kesiapan lingkungan eksekusi</p>
           </div>
-          <button class="icon-button" id="settingsCloseBtn" title="Close">×</button>
+          <button class="icon-button" id="settingsCloseBtn" title="Tutup">×</button>
         </header>
         <label class="path-field">
-          <span>ATM Root Path</span>
+          <span>Jalur ATM Root</span>
           <div class="path-row">
             <input id="atmRootInput" type="text" placeholder="/path/to/ATM root" />
-            <button id="browseBtn" class="ghost-button">Browse</button>
+            <button id="browseBtn" class="ghost-button">Pilih Folder</button>
           </div>
         </label>
         <div class="settings-actions">
-          <button class="ghost-button" id="autoDetectBtn">Auto Detect</button>
-          <button class="ghost-button" id="updateToolsBtn">Update Tools</button>
-          <button class="ghost-button" id="settingsCheckBtn">Run Preflight</button>
-          <button class="run-button" id="settingsSaveBtn">Save Configuration</button>
+          <button class="ghost-button" id="autoDetectBtn">Deteksi Otomatis</button>
+          <button class="ghost-button" id="updateToolsBtn">Pembaruan Tools</button>
+          <button class="ghost-button" id="settingsCheckBtn">Jalankan Preflight</button>
+          <button class="run-button" id="settingsSaveBtn">Simpan Konfigurasi</button>
         </div>
         <pre class="settings-output" id="settingsOutput"></pre>
       </section>
@@ -571,9 +571,9 @@ function updateRunButton() {
   const hasTestcases = idleSelected.some((device) => selectedTestcasesForDevice(device.serial).length > 0);
 
   if (runningCount > 0 && idleCount > 0) {
-    els.runBtn.textContent = `Run Selected (+${idleCount} New)`;
+    els.runBtn.textContent = `Jalankan Pengujian (+${idleCount} Baru)`;
   } else {
-    els.runBtn.textContent = `Run Selected (${selectedCount})`;
+    els.runBtn.textContent = `Jalankan Pengujian (${selectedCount})`;
   }
   els.runBtn.disabled = idleCount === 0 || !hasTestcases;
   els.cancelBtn.disabled = runningCount === 0;
@@ -585,13 +585,13 @@ function updateRunButton() {
 
 function updateSelectToggle() {
   const readyCount = state.devices.filter((device) => device.state === "device").length;
-  els.unselectBtn.textContent = state.selected.size === readyCount && readyCount > 0 ? "Unselect" : "Select";
+  els.unselectBtn.textContent = state.selected.size === readyCount && readyCount > 0 ? "Unselect All" : "Select All";
   els.unselectBtn.disabled = readyCount === 0;
 }
 
 function renderDevices() {
   if (!state.devices.length) {
-    els.deviceList.innerHTML = `<div class="empty">No devices detected</div>`;
+    els.deviceList.innerHTML = `<div class="empty">Tidak ada perangkat terdeteksi</div>`;
     return;
   }
 
@@ -615,7 +615,7 @@ function renderDevices() {
     <section class="model-group model-group-${groupIndex % 5}">
       <header class="model-group-header" data-model="${escapeHtml(model)}" role="button" tabindex="0" aria-label="Select ${escapeHtml(model)} devices">
         <strong>${escapeHtml(model)}</strong>
-        <span>${devices.length} device${devices.length === 1 ? "" : "s"}</span>
+        <span>${devices.length} Perangkat</span>
       </header>
 	      ${devices.map((device) => {
 	  const selected = state.selected.has(device.serial);
@@ -641,12 +641,12 @@ function renderDevices() {
           <span class="check-dot ${selected ? "checked" : ""}">${selected ? "✓" : ""}</span>
           <div>
             <strong>${escapeHtml(device.model || "Unknown")}</strong>
-	            <p><b>${escapeHtml(device.serial)}</b> <span class="connection-status ${connection}" aria-label="${ready ? "Connected" : escapeHtml(deviceStateLabel(device.state))}" title="${ready ? "Connected" : escapeHtml(deviceStateLabel(device.state))}"></span></p>
+	            <p><b>${escapeHtml(device.serial)}</b> <span class="connection-status ${connection}" aria-label="${ready ? "Tersambung" : escapeHtml(deviceStateLabel(device.state))}" title="${ready ? "Tersambung" : escapeHtml(deviceStateLabel(device.state))}"></span></p>
 	          </div>
 	          <div class="device-inline-actions">
 	            <span class="type-pill ${ready ? "" : "busy"}">${badge}</span>
-	            <button class="icon-mini lamp-button ${lampActive ? "active" : ""}" data-lamp="${escapeHtml(device.serial)}" ${ready ? "" : "disabled"} title="Toggle Brightness">💡</button>
-	            <button class="icon-mini scrcpy-button" data-scrcpy="${escapeHtml(device.serial)}" ${ready ? "" : "disabled"} title="Open scrcpy">📱</button>
+	            <button class="icon-mini lamp-button ${lampActive ? "active" : ""}" data-lamp="${escapeHtml(device.serial)}" ${ready ? "" : "disabled"} title="Toggle Senter Perangkat">💡</button>
+	            <button class="icon-mini scrcpy-button" data-scrcpy="${escapeHtml(device.serial)}" ${ready ? "" : "disabled"} title="Buka Screen Mirroring (Scrcpy)">📱</button>
 	          </div>
         </div>
         <div class="device-meta">
@@ -718,7 +718,7 @@ function renderTests() {
   );
   const devices = selectedDevices();
   if (!devices.length) {
-    els.testArea.innerHTML = `<div class="empty large">Select device untuk menampilkan test workspace</div>`;
+    els.testArea.innerHTML = `<div class="empty large">PILIH PERANGKAT UNTUK MENAMPILKAN WORKSPACE PENGUJIAN</div>`;
     return;
   }
   els.testArea.innerHTML = devices.map((device) => {
@@ -744,7 +744,7 @@ function renderTests() {
       return `
         <tr class="${checked ? "checked" : ""}" data-tool="${testcase.tool}">
           <td>
-            <button class="row-check ${checked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" data-tool="${testcase.tool}" title="${isDeviceRunning ? "Running (locked)" : "Select testcase"}" ${isDeviceRunning ? "disabled" : ""}>
+            <button class="row-check ${checked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" data-tool="${testcase.tool}" title="${isDeviceRunning ? "Sedang Berjalan (Terkunci)" : "Pilih testcase"}" ${isDeviceRunning ? "disabled" : ""}>
               ${checked ? "✓" : ""}
             </button>
           </td>
@@ -766,23 +766,23 @@ function renderTests() {
             <h3>${escapeHtml(device.model || "Unknown")} ${isDeviceRunning ? `<small style="color:var(--cyan); font-weight:normal;">[Running]</small>` : ""}</h3>
             <p>${escapeHtml(device.serial)} · Android ${escapeHtml(device.android || "-")}</p>
           </div>
-          <span>${deviceSelectedTools.length}/${testcases.length} checked</span>
+          <span>${deviceSelectedTools.length}/${testcases.length} tercentang</span>
         </header>
         <table>
           <thead>
             <tr>
               <th>
                 <div class="th-select">
-                  <button class="head-check-btn ${hasAnyChecked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" title="${isDeviceRunning ? "Running (locked)" : hasAnyChecked ? "Uncheck all testcases for this device" : "Select all testcases for this device"}" ${isDeviceRunning ? "disabled" : ""}>
+                  <button class="head-check-btn ${hasAnyChecked ? "checked" : ""}" data-serial="${escapeHtml(device.serial)}" title="${isDeviceRunning ? "Sedang Berjalan (Terkunci)" : hasAnyChecked ? "Hapus semua centang testcase perangkat ini" : "Pilih semua testcase perangkat ini"}" ${isDeviceRunning ? "disabled" : ""}>
                     ${hasAnyChecked ? "✓" : ""}
                   </button>
                   <span>${hasAnyChecked ? "Uncheck" : "Select"}</span>
                 </div>
               </th>
               <th>Testcase</th>
-              <th>Status</th>
-              <th>Sub Testcases</th>
-              <th>Time</th>
+              <th>Status Pengujian</th>
+              <th>Sub-Testcase / Detail</th>
+              <th>Durasi</th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
