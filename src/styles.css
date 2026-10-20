@@ -512,10 +512,7 @@ h2 {
   font-size: 9px;
 }
 
-.model-group-0, .model-group-1, .model-group-2, .model-group-3, .model-group-4 {
-  background: transparent !important;
-  border: none !important;
-}
+
 
 .model-group-0 .device-card { background: #162438; border-color: #31577d; border-left: 3px solid #4d8fd1; }
 .model-group-1 .device-card { background: #152f2f; border-color: #2e7069; border-left: 3px solid #45a99a; }

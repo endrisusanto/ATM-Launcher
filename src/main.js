@@ -370,7 +370,7 @@ els.settingsCheckBtn.addEventListener("click", runPreflight);
 els.settingsSaveBtn.addEventListener("click", saveSettings);
 els.runBtn.addEventListener("click", runBatch);
 els.cancelBtn.addEventListener("click", cancelBatch);
-// Removed ctsVerifier event listeners
+
 els.browseBtn.addEventListener("click", async () => {
   try {
     const selected = await open({
@@ -800,7 +800,7 @@ async function openCtsVerifierOnDevices() {
 async function installCtsVerifierOnDevices() {
   const devices = selectedDevices();
   if (!devices.length) return;
-  setCtsActionsDisabled(true);
+
   try {
     await Promise.all(devices.map(async (device) => {
       appendLog(`[cts-verifier] Installing APK set on ${device.serial}...`);
@@ -811,9 +811,7 @@ async function installCtsVerifierOnDevices() {
         appendLog(`[cts-verifier] Install failed on ${device.serial}: ${error}`);
       }
     }));
-  } finally {
-    setCtsActionsDisabled(false);
-  }
+  } catch (_) { /* install errors already logged per-device */ }
 }
 
 async function cleanupCtsVerifierOnDevices() {
@@ -834,7 +832,7 @@ async function startSelectedCtsVerifierTests() {
   const devices = selectedDevices();
   const tests = state.ctsVerifier.tests.filter((test) => state.ctsVerifier.selected.has(test.testcase));
   if (!devices.length || !tests.length) return;
-  setCtsActionsDisabled(true);
+
   try {
     await Promise.all(devices.map(async (device) => {
       for (const test of tests) {
@@ -847,16 +845,14 @@ async function startSelectedCtsVerifierTests() {
         }
       }
     }));
-  } finally {
-    setCtsActionsDisabled(false);
-  }
+  } catch (_) { /* start errors already logged per-device */ }
 }
 
 async function runSelectedCtsVerifierTests() {
   const devices = selectedDevices();
   const tests = state.ctsVerifier.tests.filter((test) => state.ctsVerifier.selected.has(test.testcase));
   if (!devices.length || !tests.length) return;
-  setCtsActionsDisabled(true);
+
   try {
     await Promise.all(devices.map(async (device) => {
       for (const test of tests) {
@@ -889,9 +885,7 @@ async function runSelectedCtsVerifierTests() {
         renderTests();
       }
     }));
-  } finally {
-    setCtsActionsDisabled(false);
-  }
+  } catch (_) { /* run errors already logged per-device */ }
 }
 
 async function pullCtsVerifierReports() {
@@ -908,9 +902,7 @@ async function pullCtsVerifierReports() {
   }));
 }
 
-function setCtsActionsDisabled(disabled) {
-  // Not used anymore for modal buttons
-}
+
 
 async function loadCtsNormalTests(writeLog = true) {
   await fetchCtsDynamicConfig();
@@ -1074,16 +1066,7 @@ async function toggleLamp(serial) {
   }
 }
 
-async function openScrcpyWrap(serial) {
-  if (!serial) return;
-  appendLog(`[scrcpy] Opening wrap for ${serial}...`);
-  try {
-    await invoke("open_scrcpy_wrap", { serial });
-    appendLog(`[scrcpy] Wrap updated for ${serial}`);
-  } catch (error) {
-    appendLog(`[scrcpy] Failed to open ${serial}: ${error}`);
-  }
-}
+
 
 async function runBatch() {
   const idleDevices = idleSelectedDevices();
@@ -1229,9 +1212,7 @@ function deviceStateLabel(state) {
   return state === "device" ? "tersambung" : state;
 }
 
-function selectedTestcases() {
-  return testcases.filter((testcase) => state.tools.includes(testcase.tool));
-}
+
 
 function allToolIds() {
   return testcases.map((testcase) => testcase.tool);
@@ -1248,13 +1229,7 @@ function failedToolIds() {
     .map((testcase) => testcase.tool);
 }
 
-function toggleTool(tool) {
-  if (!tool) return;
-  const next = new Set(state.tools);
-  if (next.has(tool)) next.delete(tool);
-  else next.add(tool);
-  state.tools = testcases.filter((testcase) => next.has(testcase.tool)).map((testcase) => testcase.tool);
-}
+
 
 function progressForStatus(status) {
   if (status === "Running") return 18;
@@ -1291,13 +1266,7 @@ function renderBvtSummary(summary) {
   `;
 }
 
-function markRunningAs(status) {
-  state.results.forEach((result, key) => {
-    if (result.status === "Running" || result.status === "Executing") {
-      state.results.set(key, { status, time: result.startedAt ? formatDuration(Date.now() - result.startedAt) : result.time });
-    }
-  });
-}
+
 
 function appendLog(line) {
   const now = new Date();
